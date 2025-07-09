@@ -1,0 +1,26 @@
+# 忽略操作系统生成的文件
+.DS_Store
+Thumbs.db
+
+# 忽略编译生成的文件
+*.o
+*.exe
+*.out
+
+# 忽略依赖文件夹
+node_modules/
+vendor/
+
+# 忽略配置文件
+config.ini
+.env
+
+# 忽略日志文件
+*.log
+
+# 忽略特定IDE的配置文件
+.idea/
+.vscode/
+
+__pycache__/
+dataset/
