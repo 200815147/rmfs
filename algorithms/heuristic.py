@@ -26,11 +26,12 @@ class HeuristicRLM(RLModule):
         robots_obs = obs['robots']
         workstations_obs = obs['workstations']
         shelves_obs = obs['shelves']
+        vacancies_obs = obs['vacancies']
         map_obs = obs['map']
 
         def distance(key1, idx1, key2, idx2):
-            assert key1 in ['robots', 'workstations', 'shelves']
-            assert key2 in ['robots', 'workstations', 'shelves']
+            assert key1 in ['robots', 'workstations', 'vacancies']
+            assert key2 in ['robots', 'workstations', 'vacancies']
             x1, y1 = obs[key1]['coord'][idx1]
             x2, y2 = obs[key2]['coord'][idx2]
             return abs(x1 - x2) + abs(y1 - y2)
@@ -38,51 +39,48 @@ class HeuristicRLM(RLModule):
         # fuck = robots_obs['state'][robot_id]
         # print(f'decide {robot_id} {fuck}')
         if robots_obs['state'][robot_id] == RobotState.PICK.value:
-            shelf_id = -1
+            vacancy_id = -1
             if self.model_config['pick'] == 'naive':
                 valid_id = 0
-                # fuck = shelves_obs['state'][7]
-                # print(f'debug state {fuck}')
                 for i in range(env_attr.n_shelves):
-                    if shelves_obs['state'][i] == env_attr.n_robots:
+                    if vacancies_obs['state'][i] != env_attr.n_shelves:
                         valid_id = i
-                        inventory = shelves_obs['inventory'][i]
+                        shelf_id = vacancies_obs['state'][i]
+                        inventory = shelves_obs['inventory'][shelf_id]
                         for j in range(env_attr.n_workstations):
                             demand = workstations_obs['demand'][j]
                             tmp = np.minimum(inventory, demand)
                             if np.sum(tmp) > 0:
-                                shelf_id = i
-                                # print(f'debug {robot_id} {i} {j}')
-                                # print(tmp)
+                                vacancy_id = i
                                 break
-                    if shelf_id != -1:
+                    if vacancy_id != -1:
                         break
-                if shelf_id == -1:
-                    shelf_id = valid_id
+                if vacancy_id == -1:
+                    vacancy_id = valid_id
             elif self.model_config['pick'] == 'nearest':
                 valid_id = 0
                 min_dis = env_attr.inf
                 for i in range(env_attr.n_shelves):
-                    if shelves_obs['state'][i] == env_attr.n_robots:
+                    if vacancies_obs['state'][i] != env_attr.n_shelves:
                         valid_id = i
-                        inventory = shelves_obs['inventory'][i]
-                        dis = distance('robots', robot_id, 'shelves', i)
+                        shelf_id = vacancies_obs['state'][i]
+                        inventory = shelves_obs['inventory'][shelf_id]
+                        dis = distance('robots', robot_id, 'vacancies', i)
                         for j in range(env_attr.n_workstations):
                             demand = workstations_obs['demand'][j]
                             tmp = np.minimum(inventory, demand)
                             if np.sum(tmp) > 0:
                                 if dis < min_dis:
                                     min_dis = dis
-                                    shelf_id = i
+                                    vacancy_id = i
                                     break
-                    if shelf_id != -1:
+                    if vacancy_id != -1:
                         break
-                if shelf_id == -1:
-                    shelf_id = valid_id
+                if vacancy_id == -1:
+                    vacancy_id = valid_id
             else:
                 raise NotImplementedError
-            # print(f'debug {shelf_id}')
-            ret.append((shelves_obs['coord'][shelf_id][0], shelves_obs['coord'][shelf_id][1]))
+            ret.append(vacancy_id)
         elif robots_obs['state'][robot_id] == RobotState.DELIVER.value:
             if self.model_config['deliver'] == 'naive':
                 shelf_id = robots_obs['shelf'][robot_id]
@@ -122,31 +120,28 @@ class HeuristicRLM(RLModule):
             # pdb.set_trace()
             # print(inventory)
             # print(workstations_obs['demand'][workstations_id])
-            ret.append(self.workstations[workstations_id])
+            ret.append(workstations_id + env_attr.n_shelves)
         elif robots_obs['state'][robot_id] == RobotState.RETURN.value:
             if self.model_config['return'] == 'origin':
-                shelf_id = robots_obs['shelf'][robot_id]
-                tx, ty = self.shelves[shelf_id]['coord']
+                vacancy_id = robots_obs['shelf'][robot_id]
             elif self.model_config['return'] == 'nearest':
+                valid_id = 0
                 min_dis = env_attr.inf
-                robot_x, robot_y = robots_obs['coord'][robot_id]
-                for shelf_x in range(env_attr.x_max):
-                    for shelf_y in range(env_attr.y_max):
-                        if map_obs['id'][shelf_x][shelf_y] == MapState.SHELF_EMPTY.value:
-                            dis = abs(shelf_x - robot_x) + abs(shelf_y - robot_y)
-                            if dis < min_dis:
-                                min_dis = dis
-                                tx, ty = shelf_x, shelf_y
-                # print(shelves_obs)
-                # print(map_obs['id'])
+                for i in range(env_attr.n_shelves):
+                    if vacancies_obs['state'][i] == env_attr.n_shelves:
+                        valid_id = i
+                        dis = distance('robots', robot_id, 'vacancies', i)
+                        if dis < min_dis:
+                            min_dis = dis
+                            vacancy_id = i
+                if vacancy_id == -1:
+                    vacancy_id = valid_id
             else:
                 raise NotImplementedError
-            # pdb.set_trace()
-            # shelf_id = int(shelf_id)
-            # print(f'shelf id {shelf_id}')
-            ret.append((tx, ty))
-        ret = [encode_action(x, y) for x, y in ret]
-        return {Columns.ACTIONS: np.array(ret)}
+            ret.append(vacancy_id)
+        return {
+            Columns.ACTIONS: np.array(ret)
+        }
 
     @override(RLModule)
     def _forward_exploration(self, batch, **kwargs):

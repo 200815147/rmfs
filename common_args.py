@@ -145,7 +145,7 @@ class env_attr:
     n_sku_types = 8
     
     inf = 1000000
-    max_frame = 200
+    max_frame = 500
 
 if __name__ == "__main__":
     pass

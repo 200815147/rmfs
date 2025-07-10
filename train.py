@@ -10,9 +10,10 @@ from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.core.rl_module import RLModule
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.tune import RunConfig, Tuner
+from ray.rllib.core.columns import Columns
 
-from heuristic import Columns, HeuristicRLM
-from model import MyRLModule, RMFSTransformerModule
+from algorithms.heuristic import HeuristicRLM
+from algorithms.model import MyRLModule, TransformerModule
 from rmfs_env import RMFSEnv
 import argparse
 import time
@@ -65,7 +66,7 @@ if __name__ == '__main__':
         if opts.model == 'test':
             module_class = MyRLModule
         else:
-            module_class = RMFSTransformerModule
+            module_class = TransformerModule
         config = (
             PPOConfig()
             .environment(
@@ -134,12 +135,15 @@ if __name__ == '__main__':
         )
     T = 100
     rewards = []
+    distances = []
+    makespans = []
     st = time.time()
     for _ in range(T):
         print(f'Episode: {_}')
         obs, _ = env.reset()
         done = False
         total_reward = 0
+        total_distance = 0
         # pdb.set_trace()
         # print("Rendering example episode:")
         with torch.no_grad():
@@ -156,12 +160,20 @@ if __name__ == '__main__':
                 # pdb.set_trace()
                 obs, reward, done, truncated, info = env.step(action)
                 total_reward += reward
+                total_distance += info['distance']
                 # env.render()
         # print("Example episode finished.")
-        print(f'total distance = {-total_reward}')
+        print(f'total distance = {total_distance}')
         rewards.append(total_reward)
+        distances.append(total_distance)
+        makespans.append(info['makespan'])
     ed = time.time()
     print(f'time: {ed - st}')
-    print(-sum(rewards) / len(rewards))
+    mean_reward = sum(rewards) / len(rewards)
+    print(f'mean reward: {mean_reward}')
+    mean_distance = sum(distances) / len(distances)
+    print(f'mean distance: {mean_distance}')
+    mean_makespan = sum(makespans) / len(makespans)
+    print(f'mean makespan: {mean_makespan}')
     # nearest 334
     # origin 350
