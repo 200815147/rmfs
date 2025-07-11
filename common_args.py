@@ -2,6 +2,7 @@ import argparse
 from enum import Enum
 from types import SimpleNamespace
 
+
 def merge_dict(a, b):
     a = a.copy()
     a.update(b)
@@ -113,6 +114,10 @@ def get_env_config(args):
             "fastmoney": args.fastmoney,
             "event": args.event
             }
+
+class LOGLEVEL(Enum):
+    INFO = 0
+    WARN = 1
 
 class MapState(Enum):
     EMPTY = 0

@@ -1,11 +1,10 @@
-import pandas as pd
-import numpy as np
 import json
 import pdb
-import matplotlib.pyplot as plt
-
 from collections import Counter
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 origin_order_df = pd.read_csv('dataset/dynamic/origin_order.csv')
 pick_list_df = pd.read_csv('dataset/dynamic/pick_list.csv')

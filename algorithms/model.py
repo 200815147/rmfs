@@ -1,5 +1,6 @@
 import pdb
 
+import numpy as np
 import torch
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.apis.value_function_api import ValueFunctionAPI
@@ -8,7 +9,8 @@ from ray.rllib.utils.annotations import override
 from torch import nn
 
 from common_args import env_attr
-from utils import flatten_obs
+from utils import dict_to_batch_tensor, flatten_obs
+
 
 class VacancyEmbedding(nn.Module):
     def __init__(self, input_dim, embed_dim):
@@ -131,18 +133,18 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
         # map_emb = self.map_emb(map_ids).sum(dim=1)  # [B, emb_dim]
 
         B = batch['obs']['robots']['state'].shape[0]
+        if isinstance(batch['obs']['robots']['state'], np.ndarray): # compute_values 传进来的是 np.ndarray 且没有 batch
+            batch['obs'] = dict_to_batch_tensor(batch['obs'])
+            B = 1
         
         # 机器人特征编码: [B, N_r, feat] -> MLP -> [B, N_r, emb_dim]
         robots = batch['obs']['robots']
-        try:
-            feat_r = torch.cat([
-                robots['state'].float().unsqueeze(-1),                 # [B, N_r]
-                robots['coord'].float(),          # [B, 2*N_r]
-                robots['target'].float(),         # [B, 2*N_r]
-                robots['shelf'].float().unsqueeze(-1)                  # [B, N_r]
-            ], dim=-1).view(B, env_attr.n_robots, -1)                # [B, N_r, robot_feat_dim]
-        except:
-            pdb.set_trace()
+        feat_r = torch.cat([
+            robots['state'].float().unsqueeze(-1),                 # [B, N_r]
+            robots['coord'].float(),          # [B, 2*N_r]
+            robots['target'].float(),         # [B, 2*N_r]
+            robots['shelf'].float().unsqueeze(-1)                  # [B, N_r]
+        ], dim=-1).view(B, env_attr.n_robots, -1)                # [B, N_r, robot_feat_dim]
         robot_emb = self.robot_mlp(feat_r)            # MLP applies over last dim: [B, N_r, emb_dim]
 
         # 货架特征编码: [B, N_s, feat] -> MLP -> [B, N_s, emb_dim]

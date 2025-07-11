@@ -1,7 +1,33 @@
-from common_args import env_attr, RobotState
 import pdb
+
 import numpy as np
 import torch
+
+from common_args import RobotState, env_attr
+
+
+def dict_to_batch_tensor(x, dtype=torch.float32, device=None):
+    """
+    Recursively convert a nested structure of dicts/lists/tuples containing
+    numpy arrays, Python lists, ints/floats into torch.Tensors.
+    
+    :param x: the object to convert
+    :param device: torch.device or device str, e.g. "cuda" or "cpu"
+    :param dtype: default dtype for numeric types (can override per-array later)
+    """
+    if isinstance(x, dict):
+        return {k: dict_to_batch_tensor(v, device=device, dtype=torch.int32 if k in ['state', 'shelf'] else dtype) for k, v in x.items()}
+    elif isinstance(x, (list, tuple)):
+        raise ValueError
+    else:
+        # leaf node: numpy array, torch tensor, scalar, etc.
+        if isinstance(x, torch.Tensor):
+            raise ValueError
+        else:
+            t = torch.as_tensor(x, dtype=dtype).unsqueeze(0)
+        if device is not None:
+            t = t.to(device)
+        return t
 
 def encode_action(x, y):
     return x * env_attr.y_max + y

@@ -1,4 +1,6 @@
+import argparse
 import pdb
+import time
 from pathlib import Path
 
 import numpy as np
@@ -7,16 +9,26 @@ import torch
 from gymnasium.envs.registration import register
 from ray import tune
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.callbacks.callbacks import RLlibCallback
+from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module import RLModule
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.tune import RunConfig, Tuner
-from ray.rllib.core.columns import Columns
 
 from algorithms.heuristic import HeuristicRLM
 from algorithms.model import MyRLModule, TransformerModule
 from rmfs_env import RMFSEnv
-import argparse
-import time
+
+
+class EpisodeReturn(RLlibCallback):
+    def __init__(self):
+        super().__init__()
+        # Keep some global state in between individual callback events.
+        self.overall_sum_of_rewards = 0.0
+
+    def on_episode_end(self, *, episode, **kwargs):
+        self.overall_sum_of_rewards += episode.get_return()
+        print(f"Episode done. R={episode.get_return()} Global SUM={self.overall_sum_of_rewards}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -24,6 +36,13 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='heuristic')
     parser.add_argument('--log_to_driver', action='store_true')
     parser.add_argument('--disable_local_mode', action='store_true')
+    parser.add_argument('--training_iteration', type=int, default=1)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--seed_l', type=int, default=0)
+    parser.add_argument('--seed_r', type=int, default=0)
+    parser.add_argument('--batch_size', type=int, default=2000)
+    parser.add_argument('--gamma', type=float, default=0.98)
+    parser.add_argument('--lambda_', type=float, default=0.95)
     opts = parser.parse_args()
 
     ray.init(log_to_driver=opts.log_to_driver, local_mode=not opts.disable_local_mode)
@@ -32,8 +51,8 @@ if __name__ == '__main__':
     # CUDA_VISIBLE_DEVICES 必须要加
     env_config={
                 "print_env_info": not opts.disable_env_info,
-                "seed_l": 0,
-                "seed_r": 1000,
+                "seed_l": opts.seed_l,
+                "seed_r": opts.seed_r,
                 "shelves": [
                     {"coord": (3, 0), "inventory": [(0, 10)]},
                     {"coord": (4, 0), "inventory": [(1, 10)]},
@@ -80,9 +99,9 @@ if __name__ == '__main__':
                 # Setting this to 0 forces sampling to be done in the local EnvRunner (main process or the Algorithm's actor when using Tune).
             )
             .training(
-                train_batch_size=2000,
-                gamma=0.98,
-                lambda_=0.95,
+                train_batch_size=opts.batch_size,
+                gamma=opts.gamma,
+                lambda_=opts.lambda_,
                 use_gae=True,
                 use_critic=True
             )
@@ -103,17 +122,21 @@ if __name__ == '__main__':
                 # This is due to issues with placement group fragmentation. 
                 # See https://github.com/ray-project/ray/issues/35409 for more details.
             )
+            .callbacks(EpisodeReturn)
         )
         tuner = Tuner(
             "PPO",
             param_space=config.to_dict(),
             run_config=RunConfig(
-                stop={"training_iteration": 1},
-                verbose=1,
+                stop={"training_iteration": opts.training_iteration},
+                verbose=1
             ),
         )
         results = tuner.fit()
         best_result = results.get_best_result()
+        metrics_df = best_result.metrics_dataframe
+        print(metrics_df[['training_iteration', 'env_runners/episode_return_mean']])
+        # pdb.set_trace()
         best_ckpt = best_result.checkpoint
         rl_module = RLModule.from_checkpoint(
             Path(best_ckpt.path)
@@ -133,7 +156,7 @@ if __name__ == '__main__':
             },
             env_config=env_config
         )
-    T = 100
+    T = 1
     rewards = []
     distances = []
     makespans = []
@@ -175,5 +198,3 @@ if __name__ == '__main__':
     print(f'mean distance: {mean_distance}')
     mean_makespan = sum(makespans) / len(makespans)
     print(f'mean makespan: {mean_makespan}')
-    # nearest 334
-    # origin 350
