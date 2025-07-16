@@ -39,7 +39,8 @@ class RMFSEnv(gym.Env):
             }),
             'workstations': spaces.Dict({
                 "coord": spaces.Box(0, max(env_attr.x_max, env_attr.y_max), shape=(env_attr.n_workstations, 2), dtype=np.int32), # 坐标
-                'demand': spaces.Box(0, env_attr.inf, shape=(env_attr.n_workstations, env_attr.n_sku_types), dtype=np.int32) # 订单需求
+                'demand': spaces.Box(0, env_attr.inf, shape=(env_attr.n_workstations, env_attr.n_sku_types), dtype=np.int32), # 订单需求
+                'distance': spaces.Box(0, env_attr.x_max + env_attr.y_max, shape=(env_attr.n_workstations,), dtype=np.int32) # 与决策机器人距离
             }),
             'shelves': spaces.Dict({
                 'state': spaces.MultiDiscrete([env_attr.n_robots + env_attr.n_shelves] * env_attr.n_shelves), # 货架状态 表示现在被哪个机器人运送或者在哪个空地
@@ -48,6 +49,7 @@ class RMFSEnv(gym.Env):
             'vacancies': spaces.Dict({
                 'state': spaces.MultiDiscrete([env_attr.n_shelves + 1] * env_attr.n_shelves), # 货架状态 表示现在放了哪个货架
                 "coord": spaces.Box(0, max(env_attr.x_max, env_attr.y_max), shape=(env_attr.n_shelves, 2), dtype=np.int32), # 坐标
+                'distance': spaces.Box(0, env_attr.x_max + env_attr.y_max, shape=(env_attr.n_shelves,), dtype=np.int32) # 与决策机器人距离
             }),
             'global': spaces.Dict({
                 'next_robot': spaces.MultiDiscrete([env_attr.n_robots]), # 下一个需要决策的机器人 如果没了应该也没问题 一轮结束了
@@ -71,8 +73,10 @@ class RMFSEnv(gym.Env):
             seed = next(self.seed_iter)
             self.seed(seed)
         self.instance_idx += 1
+        self.log(f'Reset environment. idx={self.instance_idx}, seed={seed}')
         self.current_frame = 0
         self.current_time = 0
+        self.makespan = 0
         self.event_queue = []
         self.map_id = np.zeros((env_attr.x_max, env_attr.y_max), dtype=np.int32)
         
@@ -108,14 +112,19 @@ class RMFSEnv(gym.Env):
         
         # time sku_type num workstation
         self.orders = []
-        total_orders_num = self.np_random.integers(10, 11)
+        total_orders_num = self.np_random.integers(1, 5)
         for i in range(total_orders_num):
-            appear_time = self.np_random.integers(1, 10)
+            appear_time = self.np_random.integers(0, 1)
             nonzero_idx = np.nonzero(total_skus)[0]
             if len(nonzero_idx) == 0:
                 break
             sku_type = self.np_random.choice(nonzero_idx)
-            num = self.np_random.integers(1, total_skus[sku_type] + 1)
+            # sku_type = 0 # debug
+            try:
+                num = self.np_random.integers(1, total_skus[sku_type] + 1)
+            except:
+                pdb.set_trace()
+            # num = 10 # debug
             total_skus[sku_type] -= num
             workstation = self.np_random.integers(0, env_attr.n_workstations)
             self.orders.append((appear_time, sku_type, num, workstation))
@@ -141,7 +150,7 @@ class RMFSEnv(gym.Env):
         self.log(f"frame={self.current_frame}, time={self.current_time}", LOGLEVEL.INFO)
         robot = self.robots[robot_id]
         target_x, target_y = self.decode_action(action)
-
+        reward = 0
         if robot['state'] == RobotState.PICK:
             vacancy_id = self.map_id[target_x][target_y] - self.vacancy_offset
             shelf_id = self.vacancies[vacancy_id]['state']
@@ -154,6 +163,7 @@ class RMFSEnv(gym.Env):
             robot['shelf'] = shelf_id
             vacancy['state'] = env_attr.n_shelves
             self.log(f"Robot {robot_id} pick shelf {shelf_id}.", LOGLEVEL.INFO)
+            reward += env_attr.pick_reward
 
         elif robot['state'] == RobotState.DELIVER:
             workstation_id = self.map_id[target_x][target_y] - self.workstation_offset
@@ -169,6 +179,7 @@ class RMFSEnv(gym.Env):
             self.future_demand -= take_sku
             robot['state'] = RobotState.RETURN
             self.log(f"Robot {robot_id} deliver shelf {shelf_id} to workstation {workstation_id}.", LOGLEVEL.INFO)
+            reward += env_attr.deliver_reward
 
         elif robot['state'] == RobotState.RETURN:
             shelf_id = robot['shelf']
@@ -181,6 +192,7 @@ class RMFSEnv(gym.Env):
             robot['state'] = RobotState.PICK
             vacancy['state'] = shelf_id
             self.log(f"Robot {robot_id} return shelf {shelf_id} to ({target_x}, {target_y}).", LOGLEVEL.INFO)
+            reward += env_attr.return_reward
 
         elif robot['state'] == RobotState.END:
             pass
@@ -196,16 +208,17 @@ class RMFSEnv(gym.Env):
         if robot['state'] == RobotState.PICK and not np.any(self.get_workstations_obs()['demand']) and self.orders_cnt == len(self.orders):
             robot['sate'] = RobotState.END
             self.end_robots += 1
+            self.makespan = max(self.makespan, finish_time)
         else:
             heapq.heappush(self.event_queue, (finish_time, 1, robot_id))
 
-        reward = -dis
+        reward -= dis
 
-        done = self.end_robots == env_attr.n_robots or self.current_frame > env_attr.max_frame
+        done = self.end_robots == env_attr.n_robots
         obs = self._get_obs()
         info = {'distance': dis}
         if done:
-            info['makespan'] = self.current_time
+            info['makespan'] = self.makespan
         
         self.log(f"Robot {robot_id} take action ({robot_x}, {robot_y}) -> ({target_x}, {target_y}), reward={reward}", LOGLEVEL.INFO)
 
@@ -226,7 +239,7 @@ class RMFSEnv(gym.Env):
             _, sku_type, sku_num, workstations_id = self.orders[order_id]
             self.orders_cnt += 1
             self.future_demand[sku_type] += sku_num
-            self.log(f"order {order_id} assigned to workstation {workstations_id}, add sku ({sku_type}) * {sku_num}", LOGLEVEL.INFO)
+            self.log(f"Order {order_id} assigned to workstation {workstations_id}, add sku ({sku_type}) * {sku_num}", LOGLEVEL.INFO)
             self.workstations[workstations_id]['demand'][sku_type] += sku_num
         return self.event_queue[0][2] if len(self.event_queue) != 0 else 0
     
@@ -238,6 +251,8 @@ class RMFSEnv(gym.Env):
         return workstations_obs
 
     def _get_obs(self):
+        next_robot = self.get_next_robot()
+        robot_x, robot_y = self.robots[next_robot]['coord']
         robots_obs = {
             'state': np.array([robot['state'].value for robot in self.robots], dtype=np.int32),
             'coord': np.array([robot['coord'] for robot in self.robots], dtype=np.int32),
@@ -245,6 +260,7 @@ class RMFSEnv(gym.Env):
             'shelf': np.array([robot['shelf'] for robot in self.robots], dtype=np.int32)
         }
         workstations_obs = self.get_workstations_obs()
+        workstations_obs['distance'] = np.abs(robot_x - workstations_obs['coord'][:, 0]) + np.abs(robot_y - workstations_obs['coord'][:, 1])
         shelves_obs = {
             'state': np.array([shelf['state'] for shelf in self.shelves], dtype=np.int32),
             'inventory': np.array([shelf['inventory'] for shelf in self.shelves], dtype=np.int32)
@@ -253,7 +269,7 @@ class RMFSEnv(gym.Env):
             'state': np.array([vacancy['state'] for vacancy in self.vacancies], dtype=np.int32),
             'coord': np.array([vacancy['coord'] for vacancy in self.vacancies], dtype=np.int32)
         }
-        next_robot = self.get_next_robot()
+        vacancies_obs['distance'] = np.abs(robot_x - vacancies_obs['coord'][:, 0]) + np.abs(robot_y - vacancies_obs['coord'][:, 1])
         action_mask = np.zeros((env_attr.n_shelves + env_attr.n_workstations), dtype=np.int8)
         # TODO mask 向量化
         if self.robots[next_robot]['state'] == RobotState.PICK: # 只能取未取货架
@@ -277,9 +293,8 @@ class RMFSEnv(gym.Env):
                 self.log('No workstation needed. Go to workstation 0.', log_level=LOGLEVEL.WARN)
                 action_mask[env_attr.n_shelves] = 1
         elif self.robots[next_robot]['state'] == RobotState.RETURN: # 只能去货架空地
-            for i, vacancy in enumerate(self.vacancies):
-                if vacancy['state'] == env_attr.n_shelves:
-                    action_mask[i] = 1
+            action_mask = (vacancies_obs['state'] == env_attr.n_shelves).astype(np.int8)
+            action_mask = np.concatenate((action_mask, np.zeros((env_attr.n_workstations), dtype=np.int8)))
         obs = {
             'map': {
                 'id': self.map_id
@@ -293,18 +308,11 @@ class RMFSEnv(gym.Env):
                 'action_mask': action_mask
             }
         }
-        
+        # pdb.set_trace()
         for key in obs.keys():
             assert self.observation_space[key].contains(obs[key]), f"{key} obs invalid!"
-        # pdb.set_trace()
+        
         return obs
-
-    def render(self):
-        grid = np.full(self.grid_shape, ".", dtype='<U1')
-        for pos in self.shelves: grid[pos] = "S"
-        for ws in self.workstations: grid[ws] = "W"
-        for r, d in self.robots.items(): grid[d["coord"]] = "R"
-        print("\n".join("".join(row) for row in grid))
 
     def log(self, msg, log_level=LOGLEVEL.INFO):
         if self.print_env_info:

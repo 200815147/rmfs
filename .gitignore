@@ -24,3 +24,4 @@ config.ini
 
 __pycache__/
 dataset/
+output/
