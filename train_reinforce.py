@@ -86,8 +86,8 @@ class PolicyNet(nn.Module):
         print(f'robot dim: {robot_dim} vacancy dim: {shelf_dim} workstation dim: {ws_dim}')
 
         # 6) Transformer Encoder: 接收实体序列长度 L, 每个 embedding 大小 emb_dim
-        nhead = 2
-        num_layers = 1
+        nhead = 4
+        num_layers = 2
         ff_dim = emb_dim * nhead
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=emb_dim, nhead=nhead, dim_feedforward=ff_dim
@@ -273,7 +273,7 @@ if __name__ == '__main__':
     env_config['workstations'] = json_data['workstations']
 
     learning_rate = 1e-4
-    num_episodes = 2000
+    num_episodes = 500
     hidden_dim = 128
     gamma = 0.98
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device(
@@ -284,7 +284,7 @@ if __name__ == '__main__':
     agent = REINFORCE(learning_rate, gamma, device)
 
     return_list = []
-    for i in range(20):
+    for i in range(5):
         with tqdm(total=int(num_episodes / 10), desc='Iteration %d' % i) as pbar:
             for i_episode in range(int(num_episodes / 10)):
                 episode_return = 0
@@ -309,12 +309,12 @@ if __name__ == '__main__':
                     episode_return += reward
                 return_list.append(episode_return)
                 agent.update(transition_dict)
-                if (i_episode + 1) % 10 == 0:
+                if (i_episode + 1) % 50 == 0:
                     pbar.set_postfix({
                         'episode':
-                        '%d' % (num_episodes / 10 * i + i_episode + 1),
+                        '%d' % (num_episodes / 50 * i + i_episode + 1),
                         'return':
-                        '%.3f' % np.mean(return_list[-10:])
+                        '%.3f' % np.mean(return_list[-50:])
                     })
                 pbar.update(1)
     episodes_list = list(range(len(return_list)))
@@ -337,4 +337,22 @@ if __name__ == '__main__':
     plt.title('REINFORCE on {}'.format(env_name))
     plt.savefig(f'output/{current_time}_fig2.png')
     # plt.show()
+
+    rewards = []
+    for i in range(opts.seed_l, opts.seed_r + 1):
+        obs, _ = env.reset()
+        done = False
+        total_reward = 0
+        while not done:
+            action = agent.take_action(obs)
+            next_obs, reward, done, _, _ = env.step(action)
+            transition_dict['states'].append(obs)
+            transition_dict['actions'].append(action)
+            transition_dict['next_states'].append(next_obs)
+            transition_dict['rewards'].append(reward)
+            transition_dict['dones'].append(done)
+            obs = next_obs
+            total_reward += reward
+        rewards.append(total_reward)
+    print(np.mean(rewards))
     pdb.set_trace()

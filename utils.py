@@ -16,7 +16,7 @@ def dict_to_batch_tensor(x, dtype=torch.float32, device=None):
     :param dtype: default dtype for numeric types (can override per-array later)
     """
     if isinstance(x, dict):
-        return {k: dict_to_batch_tensor(v, device=device, dtype=torch.int32 if k in ['state', 'shelf'] else dtype) for k, v in x.items()}
+        return {k: dict_to_batch_tensor(v, device=device, dtype=torch.int32 if k in ['state', 'shelf', 'next_robot', 'action_mask'] else dtype) for k, v in x.items()}
     elif isinstance(x, (list, tuple)):
         raise ValueError
     else:

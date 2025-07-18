@@ -26,7 +26,7 @@ class env_attr:
     y_max = 5
     n_map_state = 5 
 
-    n_robots = 1
+    n_robots = 2
     n_robot_state = len(RobotState)
 
     n_workstations = 1

@@ -3,6 +3,7 @@ import pdb
 import time
 import json
 from pathlib import Path
+import random
 
 import numpy as np
 import pandas as pd
@@ -18,11 +19,11 @@ from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.tune import RunConfig, Tuner
 
 from algorithms.heuristic import HeuristicRLM
-from algorithms.model import MyRLModule, TransformerModule
+from rmfs.algorithms.transformer import TransformerModule
 from rmfs_env import RMFSEnv
 
 
-class EpisodeReturn(RLlibCallback):
+class MyCallback(RLlibCallback):
     def __init__(self):
         super().__init__()
         # Keep some global state in between individual callback events.
@@ -31,6 +32,16 @@ class EpisodeReturn(RLlibCallback):
     def on_episode_end(self, *, episode, **kwargs):
         self.overall_sum_of_rewards += episode.get_return()
         print(f"Episode done. R={episode.get_return()} Global SUM={self.overall_sum_of_rewards}")
+
+    def on_train_result(
+        self,
+        *,
+        algorithm,
+        metrics_logger,
+        result: dict,
+        **kwargs,
+    ):
+        pass
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -42,6 +53,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--seed_l', type=int, default=0)
     parser.add_argument('--seed_r', type=int, default=0)
+    parser.add_argument('--extra_reward', action='store_true')
     # config
     parser.add_argument('--model', type=str, default='heuristic')
     parser.add_argument('--layout', type=str, default='layout')
@@ -61,6 +73,13 @@ if __name__ == '__main__':
     parser.add_argument('--return_heuristic', choices=['origin', 'nearest'], default='origin')
     opts = parser.parse_args()
 
+    random.seed(opts.seed)
+    np.random.seed(opts.seed)
+    torch.manual_seed(opts.seed)
+    torch.cuda.manual_seed_all(opts.seed)  # 如果有 GPU
+    torch.cuda.cudnn_enabled = False # 可能牺牲性能？
+    torch.backends.cudnn.deterministic = True # 可能牺牲性能？
+
     ray.init(log_to_driver=opts.log_to_driver, local_mode=not opts.disable_local_mode)
     # log_to_driver=False 关闭 raylet 警告
     # local_mode=True 可以用 pdb 调试
@@ -69,18 +88,16 @@ if __name__ == '__main__':
                 "print_env_info": not opts.disable_env_info,
                 "seed_l": opts.seed_l,
                 "seed_r": opts.seed_r,
+                'extra_reward': opts.extra_reward
             }
     with open(f'{opts.layout}.json', 'r', encoding='utf-8') as f:
         json_data = json.load(f)
     env_config['shelves'] = json_data['shelves']
     env_config['workstations'] = json_data['workstations']
     env = RMFSEnv(env_config)
-    
-    if opts.model in ['test', 'transformer']:
-        if opts.model == 'test':
-            module_class = MyRLModule
-        else:
-            module_class = TransformerModule
+
+    if opts.model in ['transformer']:
+        module_class = TransformerModule
         config = (
             PPOConfig()
             .environment(
@@ -119,7 +136,7 @@ if __name__ == '__main__':
                 # This is due to issues with placement group fragmentation. 
                 # See https://github.com/ray-project/ray/issues/35409 for more details.
             )
-            .callbacks(EpisodeReturn)
+            .callbacks(MyCallback)
         )
         tuner = Tuner(
             "PPO",
@@ -129,7 +146,10 @@ if __name__ == '__main__':
                 verbose=2
             ),
         )
+        st = time.time()
         results = tuner.fit()
+        ed = time.time()
+        print(f'Training time: {ed - st}')
         best_result = results.get_best_result()
         metrics_df = best_result.metrics_dataframe
         
@@ -137,7 +157,7 @@ if __name__ == '__main__':
         pd.set_option('display.max_columns', None)
         df = metrics_df[['training_iteration', 'env_runners/episode_return_mean', 'learners/default_policy/policy_loss', 'learners/default_policy/vf_loss']]
         print(metrics_df[['training_iteration', 'env_runners/episode_return_mean']])
-        df.to_csv('train_metrics.csv', index=False)
+        df.to_csv('output/train_metrics.csv', index=False)
 
         best_ckpt = best_result.checkpoint
         rl_module = RLModule.from_checkpoint(
@@ -159,14 +179,14 @@ if __name__ == '__main__':
             },
             env_config=env_config
         )
-    T = 100
+    T = 1
     rewards = []
     distances = []
     makespans = []
     st = time.time()
     for _ in range(T):
-        print(f'Episode: {_}')
-        obs, _ = env.reset()
+        # print(f'Episode: {_}')
+        obs, _ = env.reset(seed=_)
         done = False
         total_reward = 0
         total_distance = 0
@@ -178,6 +198,7 @@ if __name__ == '__main__':
                     action = model_outputs[Columns.ACTIONS][0]
                 else:
                     action_dist_params = model_outputs["action_dist_inputs"][0].numpy()
+                    print(action_dist_params)
                     # pdb.set_trace()
                     action = np.argmax(action_dist_params)
                 # pdb.set_trace()
@@ -191,7 +212,7 @@ if __name__ == '__main__':
         distances.append(total_distance)
         makespans.append(info['makespan'])
     ed = time.time()
-    print(f'time: {ed - st}')
+    print(f'Eval time: {ed - st}')
     mean_reward = sum(rewards) / len(rewards)
     print(f'mean reward: {mean_reward}')
     print(rewards)

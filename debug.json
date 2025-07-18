@@ -1,0 +1,13 @@
+{
+  "shelves": [
+    { "coord": [2, 4], "inventory": [[0, 1]] },
+    { "coord": [4, 2], "inventory": [[0, 1]] },
+    { "coord": [3, 1], "inventory": [[0, 1]] },
+    { "coord": [4, 1], "inventory": [[0, 1]] },
+    { "coord": [3, 3], "inventory": [[0, 1]] },
+    { "coord": [4, 3], "inventory": [[0, 1]] },
+    { "coord": [3, 4], "inventory": [[0, 1]] },
+    { "coord": [4, 4], "inventory": [[0, 1]] }
+  ],
+  "workstations": [[0, 0]]
+}

@@ -22,6 +22,7 @@ class RMFSEnv(gym.Env):
         super().__init__()
         self.config = config
         self.print_env_info = config['print_env_info']
+        self.extra_reward = config['extra_reward']
         self.seed_pool = cycle(range(config["seed_l"], config["seed_r"] + 1))
         self.seed_iter = iter(self.seed_pool)
         self.instance_idx = -1
@@ -64,14 +65,12 @@ class RMFSEnv(gym.Env):
 
     def seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # 如果有 GPU
         return [seed]
 
     def reset(self, *, seed=None, options=None):
         if seed is None:
             seed = next(self.seed_iter)
-            self.seed(seed)
+        self.seed(seed)
         self.instance_idx += 1
         self.log(f'Reset environment. idx={self.instance_idx}, seed={seed}')
         self.current_frame = 0
@@ -120,11 +119,8 @@ class RMFSEnv(gym.Env):
                 break
             sku_type = self.np_random.choice(nonzero_idx)
             # sku_type = 0 # debug
-            try:
-                num = self.np_random.integers(1, total_skus[sku_type] + 1)
-            except:
-                pdb.set_trace()
-            # num = 10 # debug
+            num = self.np_random.integers(1, total_skus[sku_type] + 1)
+            # num = 1 # debug
             total_skus[sku_type] -= num
             workstation = self.np_random.integers(0, env_attr.n_workstations)
             self.orders.append((appear_time, sku_type, num, workstation))
@@ -163,7 +159,8 @@ class RMFSEnv(gym.Env):
             robot['shelf'] = shelf_id
             vacancy['state'] = env_attr.n_shelves
             self.log(f"Robot {robot_id} pick shelf {shelf_id}.", LOGLEVEL.INFO)
-            reward += env_attr.pick_reward
+            if self.extra_reward:
+                reward += env_attr.pick_reward
 
         elif robot['state'] == RobotState.DELIVER:
             workstation_id = self.map_id[target_x][target_y] - self.workstation_offset
@@ -179,7 +176,8 @@ class RMFSEnv(gym.Env):
             self.future_demand -= take_sku
             robot['state'] = RobotState.RETURN
             self.log(f"Robot {robot_id} deliver shelf {shelf_id} to workstation {workstation_id}.", LOGLEVEL.INFO)
-            reward += env_attr.deliver_reward
+            if self.extra_reward:
+                reward += env_attr.deliver_reward
 
         elif robot['state'] == RobotState.RETURN:
             shelf_id = robot['shelf']
@@ -192,7 +190,8 @@ class RMFSEnv(gym.Env):
             robot['state'] = RobotState.PICK
             vacancy['state'] = shelf_id
             self.log(f"Robot {robot_id} return shelf {shelf_id} to ({target_x}, {target_y}).", LOGLEVEL.INFO)
-            reward += env_attr.return_reward
+            if self.extra_reward:
+                reward += env_attr.return_reward
 
         elif robot['state'] == RobotState.END:
             pass
