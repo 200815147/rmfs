@@ -1,9 +1,9 @@
 import argparse
-import pdb
-import time
 import json
-from pathlib import Path
+import pdb
 import random
+import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,9 @@ from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.tune import RunConfig, Tuner
 
 from algorithms.heuristic import HeuristicRLM
-from rmfs.algorithms.transformer import TransformerModule
+from algorithms.hgnn import HGNNModule
+from algorithms.transformer import TransformerModule
+from common_args import env_attr
 from rmfs_env import RMFSEnv
 
 
@@ -31,7 +33,7 @@ class MyCallback(RLlibCallback):
 
     def on_episode_end(self, *, episode, **kwargs):
         self.overall_sum_of_rewards += episode.get_return()
-        print(f"Episode done. R={episode.get_return()} Global SUM={self.overall_sum_of_rewards}")
+        print(f"Episode done. R={episode.get_return()}")
 
     def on_train_result(
         self,
@@ -57,6 +59,7 @@ if __name__ == '__main__':
     # config
     parser.add_argument('--model', type=str, default='heuristic')
     parser.add_argument('--layout', type=str, default='layout')
+    parser.add_argument('--T', type=int, default=100)
     # train
     parser.add_argument('--training_iteration', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=2000)
@@ -67,10 +70,15 @@ if __name__ == '__main__':
     parser.add_argument("--disable_gae", action="store_true")
     parser.add_argument("--disable_critic", action="store_true")
     parser.add_argument('--num_sgd_iter', type=int, default=5)
+    parser.add_argument("--train_only", action="store_true")
     # heuristic
-    parser.add_argument('--pick_heuristic', choices=['naive', 'nearest'], default='naive')
-    parser.add_argument('--deliver_heuristic', choices=['naive', 'max_satify', 'nearest'], default='naive')
-    parser.add_argument('--return_heuristic', choices=['origin', 'nearest'], default='origin')
+    parser.add_argument('--eval_all', action="store_true")
+    pick_choices = ['naive', 'nearest']
+    parser.add_argument('--pick_heuristic', choices=pick_choices, default='naive')
+    deliver_choices = ['naive', 'max_satify', 'nearest']
+    parser.add_argument('--deliver_heuristic', choices=deliver_choices, default='naive')
+    return_choices = ['origin', 'nearest']
+    parser.add_argument('--return_heuristic', choices=return_choices, default='origin')
     opts = parser.parse_args()
 
     random.seed(opts.seed)
@@ -88,14 +96,12 @@ if __name__ == '__main__':
                 "print_env_info": not opts.disable_env_info,
                 "seed_l": opts.seed_l,
                 "seed_r": opts.seed_r,
-                'extra_reward': opts.extra_reward
+                'extra_reward': opts.extra_reward,
+                'layout': opts.layout
             }
-    with open(f'{opts.layout}.json', 'r', encoding='utf-8') as f:
-        json_data = json.load(f)
-    env_config['shelves'] = json_data['shelves']
-    env_config['workstations'] = json_data['workstations']
+    
     env = RMFSEnv(env_config)
-
+    # exit(0)
     if opts.model in ['transformer']:
         module_class = TransformerModule
         config = (
@@ -107,6 +113,7 @@ if __name__ == '__main__':
             .framework("torch")
             .env_runners(
                 num_env_runners=opts.num_env_runners
+                # gym_env_vectorize_mode='SYNC'
                 # Number of EnvRunner actors to create for parallel sampling. 
                 # Setting this to 0 forces sampling to be done in the local EnvRunner (main process or the Algorithm's actor when using Tune).
             )
@@ -119,7 +126,7 @@ if __name__ == '__main__':
                 lr=opts.lr,
                 num_sgd_iter=opts.num_sgd_iter
             )
-            .resources(num_gpus=2)
+            .resources(num_gpus=1)
             .rl_module(
             # We need to explicitly specify here RLModule to use and
             # the catalog needed to build it.
@@ -160,6 +167,7 @@ if __name__ == '__main__':
         df.to_csv('output/train_metrics.csv', index=False)
 
         best_ckpt = best_result.checkpoint
+        print(f'Save checkpoint to {Path(best_ckpt.path)}.')
         rl_module = RLModule.from_checkpoint(
             Path(best_ckpt.path)
             / "learner_group"
@@ -179,44 +187,68 @@ if __name__ == '__main__':
             },
             env_config=env_config
         )
-    T = 1
-    rewards = []
-    distances = []
-    makespans = []
-    st = time.time()
-    for _ in range(T):
-        # print(f'Episode: {_}')
-        obs, _ = env.reset(seed=_)
-        done = False
-        total_reward = 0
-        total_distance = 0
-        
-        with torch.no_grad():
-            while not done:
-                model_outputs = rl_module.forward_inference({"obs": obs})
-                if isinstance(rl_module, HeuristicRLM):
-                    action = model_outputs[Columns.ACTIONS][0]
-                else:
-                    action_dist_params = model_outputs["action_dist_inputs"][0].numpy()
-                    print(action_dist_params)
+    if opts.train_only:
+        exit(0)
+    
+    def eval(env, rl_module, T=opts.T):
+        # T = 100
+        rewards = []
+        distances = []
+        makespans = []
+        st = time.time()
+        for _ in range(T):
+            # print(f'Episode: {_}')
+            obs, _ = env.reset(seed=_)
+            done = False
+            total_reward = 0
+            total_distance = 0
+            
+            with torch.no_grad():
+                while not done:
+                    model_outputs = rl_module.forward_inference({"obs": obs})
+                    if isinstance(rl_module, HeuristicRLM):
+                        action = model_outputs[Columns.ACTIONS][0]
+                    else:
+                        action_dist_params = model_outputs["action_dist_inputs"][0].numpy()
+                        # print(action_dist_params)
+                        # pdb.set_trace()
+                        action = np.argmax(action_dist_params)
                     # pdb.set_trace()
-                    action = np.argmax(action_dist_params)
-                # pdb.set_trace()
-                obs, reward, done, truncated, info = env.step(action)
-                total_reward += reward
-                total_distance += info['distance']
-                # env.render()
+                    obs, reward, done, truncated, info = env.step(action)
+                    total_reward += reward
+                    total_distance += info['distance']
+                    # env.render()
 
-        # print(f'total distance = {total_distance}')
-        rewards.append(total_reward)
-        distances.append(total_distance)
-        makespans.append(info['makespan'])
-    ed = time.time()
-    print(f'Eval time: {ed - st}')
-    mean_reward = sum(rewards) / len(rewards)
-    print(f'mean reward: {mean_reward}')
-    print(rewards)
-    mean_distance = sum(distances) / len(distances)
-    print(f'mean distance: {mean_distance}')
-    mean_makespan = sum(makespans) / len(makespans)
-    print(f'mean makespan: {mean_makespan}')
+            # print(f'total distance = {total_distance}')
+            rewards.append(total_reward)
+            distances.append(total_distance)
+            makespans.append(info['makespan'])
+        ed = time.time()
+        print(f'Eval time: {ed - st}')
+        mean_reward = sum(rewards) / len(rewards)
+        print(f'mean reward: {mean_reward}')
+        print(rewards)
+        mean_distance = sum(distances) / len(distances)
+        print(f'mean distance: {mean_distance}')
+        mean_makespan = sum(makespans) / len(makespans)
+        print(f'mean makespan: {mean_makespan}')
+
+    if opts.eval_all:
+        for pick_method in pick_choices:
+            for deliver_method in deliver_choices:
+                for return_method in return_choices:
+                    rl_module = HeuristicRLM(
+                        observation_space=env.observation_space, 
+                        action_space=env.observation_space,
+                        model_config={
+                            'pick': pick_method, # naive nearest
+                            'deliver': deliver_method, # naive max_satify nearest
+                            'return': return_method # origin nearest
+                        },
+                        env_config=env_config
+                    )
+                    print(pick_method, deliver_method, return_method)
+                    eval(env, rl_module, opts.T)
+                    print('')
+    else:
+        eval(env, rl_module)

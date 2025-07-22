@@ -1,3 +1,4 @@
+import json
 import pdb
 
 import numpy as np
@@ -13,7 +14,10 @@ class HeuristicRLM(RLModule):
 
     def __init__(self, observation_space, action_space, model_config, inference_only=True, **kwargs):
         super().__init__()
-        self.config = kwargs['env_config']
+        layout = kwargs['env_config']['layout']
+        with open(f'/home/tangyibang/rmfs/{layout}.json', 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        self.config = json_data
         self.shelves = self.config['shelves']
         self.workstations = self.config['workstations']
         self.model_config = model_config

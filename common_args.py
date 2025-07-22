@@ -22,20 +22,20 @@ class RobotState(Enum):
     # 0 -> 1 -> 2 -> 0 -> 1 -> 2 ... 2 -> 3
 
 class env_attr:
-    x_max = 8
-    y_max = 5
+    x_max = None
+    y_max = None
     n_map_state = 5 
 
-    n_robots = 2
+    n_robots = None
     n_robot_state = len(RobotState)
 
-    n_workstations = 1
+    n_workstations = None
 
-    n_shelves = 8
-    n_sku_types = 8
+    n_shelves = None
+    n_sku_types = None
     
     inf = 1000000
-    max_frame = 500
+    max_frame = 5000
 
     pick_reward = 5
     deliver_reward = 5

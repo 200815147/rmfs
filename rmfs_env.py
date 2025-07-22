@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from cprint import *
 from gymnasium import spaces
-
+import json
 from common_args import LOGLEVEL, MapState, RobotState, env_attr
 
 
@@ -21,6 +21,20 @@ class RMFSEnv(gym.Env):
     def __init__(self, config=None):
         super().__init__()
         self.config = config
+        layout = config['layout']
+        with open(f'/home/tangyibang/rmfs/{layout}.json', 'r', encoding='utf-8') as f: # TODO
+            json_data = json.load(f)
+        self.config = json_data
+        # self.config['shelves'] = json_data['shelves']
+        # self.config['workstations'] = json_data['workstations']
+        # self.config['robots'] = json_data['robots']
+        env_attr.n_robots = len(json_data['robots'])
+        env_attr.n_workstations = len(json_data['workstations'])
+        env_attr.n_shelves = len(json_data['shelves'])
+        env_attr.n_sku_types = json_data['n_sku_types']
+        env_attr.x_max = json_data['x_max']
+        env_attr.y_max = json_data['y_max']
+        
         self.print_env_info = config['print_env_info']
         self.extra_reward = config['extra_reward']
         self.seed_pool = cycle(range(config["seed_l"], config["seed_r"] + 1))
@@ -82,9 +96,12 @@ class RMFSEnv(gym.Env):
         # 初始化机器人
         self.robots = [{"coord": (0, 0), "state": RobotState.PICK, "target": (0, 0), "shelf": env_attr.n_shelves} for r in range(env_attr.n_robots)] # TODO 机器人初始位置
         self.end_robots = 0
-        for i, robot in enumerate(self.robots):
+        robots = self.config.get('robots', None)
+        assert len(robots) == env_attr.n_robots, 'n_robots wrong.'
+        for i in range(env_attr.n_robots):
             heapq.heappush(self.event_queue, (0, 1, i))
-            self.map_id[robot['coord'][0]][robot['coord'][1]] = i + self.robot_offset
+            self.robots[i]['coord'] = tuple(robots[i])
+            self.map_id[self.robots[i]['coord'][0]][self.robots[i]['coord'][1]] = i + self.robot_offset
 
         total_skus = np.zeros((env_attr.n_sku_types), dtype=np.int32)
         shelves = self.config.get('shelves', None)
@@ -111,9 +128,13 @@ class RMFSEnv(gym.Env):
         
         # time sku_type num workstation
         self.orders = []
-        total_orders_num = self.np_random.integers(1, 5)
+        num_l = self.config.get('order_num_l', 1)
+        num_r = self.config.get('order_num_r', 2)
+        total_orders_num = self.np_random.integers(num_l, num_r)
+        time_l = self.config.get('order_time_l', 0)
+        time_r = self.config.get('order_time_r', 1)
         for i in range(total_orders_num):
-            appear_time = self.np_random.integers(0, 1)
+            appear_time = self.np_random.integers(time_l, time_r)
             nonzero_idx = np.nonzero(total_skus)[0]
             if len(nonzero_idx) == 0:
                 break
