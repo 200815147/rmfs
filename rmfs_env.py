@@ -1,4 +1,5 @@
 import heapq
+import json
 import pdb
 from itertools import cycle
 
@@ -7,7 +8,7 @@ import numpy as np
 import torch
 from cprint import *
 from gymnasium import spaces
-import json
+
 from common_args import LOGLEVEL, MapState, RobotState, env_attr
 
 
@@ -82,8 +83,10 @@ class RMFSEnv(gym.Env):
         return [seed]
 
     def reset(self, *, seed=None, options=None):
+        self.current_seed = -1
         if seed is None:
             seed = next(self.seed_iter)
+            self.current_seed = seed
         self.seed(seed)
         self.instance_idx += 1
         self.log(f'Reset environment. idx={self.instance_idx}, seed={seed}')
@@ -239,6 +242,7 @@ class RMFSEnv(gym.Env):
         info = {'distance': dis}
         if done:
             info['makespan'] = self.makespan
+            info['seed'] = self.current_seed
         
         self.log(f"Robot {robot_id} take action ({robot_x}, {robot_y}) -> ({target_x}, {target_y}), reward={reward}", LOGLEVEL.INFO)
 

@@ -1,5 +1,6 @@
 import json
 import pdb
+from collections import Counter
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -164,10 +165,86 @@ def create_grid_visualization(colors, cell_labels=None, title="网格图", save_
     
     print(f"网格图已保存至: {save_path}")
 
+def read_xmap():
+    with open("dataset/static/map_2_1715935647135.xmap", "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    nodes = data['exportMapDto']['exportMapNodeDtoList']
+    # 1. 抽取所有 dict 的 key 并构造一个扁平的 key 序列
+    all_keys = []
+    shelves = []
+    queues = []
+    turns = []
+    blockeds = []
+    stations = []
+    charger_pis = []
+    chargers = []
+    x_indexes, y_indexes = [], []
+    for d in nodes:
+        all_keys.append(d['cellType'])
+        x_indexes.append(int(d['indexX']))
+        y_indexes.append(int(d['indexY']))
+        if d['cellType'] == 'SHELF_CELL':
+            shelves.append(d)
+        elif d['cellType'] == 'QUEUE_CELL':
+            queues.append(d)
+        elif d['cellType'] == 'TURN_CELL':
+            turns.append(d)
+        elif d['cellType'] == 'BLOCKED_CELL':
+            blockeds.append(d)
+        elif d['cellType'] == 'STATION_CELL':
+            stations.append(d)
+        elif d['cellType'] == 'CHARGER_PI_CELL':
+            charger_pis.append(d)
+        elif d['cellType'] == 'CHARGER_CELL':
+            chargers.append(d)
+        
+
+    # 2. 用 Counter 统计出现次数
+    counter = Counter(all_keys)
+    json_dict = {}
+    print(counter)
+    print(min(x_indexes), max(x_indexes))
+    print(min(y_indexes), max(y_indexes))
+    min_x = min(x_indexes) - 1
+    min_y = min(y_indexes) - 1
+    x_max = max(x_indexes) - min_x + 1 + 1
+    y_max = max(y_indexes) - min_y + 1 + 1
+    json_dict['x_max'] = x_max
+    json_dict['y_max'] = y_max
+    json_dict['shelves'] = []
+    json_dict['workstations'] = []
+    json_dict['robots'] = []
+    warehouse_map = np.zeros((x_max, y_max), dtype=np.int16)
+    for shelf in shelves:
+        json_dict['shelves'].append({
+            'coord': [shelf['indexX'] - min_x, shelf['indexY'] - min_y],
+            'inventory': []
+        })
+        warehouse_map[shelf['indexX'] - min_x, shelf['indexY'] - min_y] = 1
+    for station in stations:
+        json_dict['workstations'].append([station['indexX'] - min_x, station['indexY'] - min_y])
+        warehouse_map[station['indexX'] - min_x, station['indexY'] - min_y] = 2
+
+    # 写入JSON文件（使用with语句自动关闭文件）
+    with open('geekplus.json', 'w') as f:
+        json.dump(json_dict, f)  # 注意：这里是dump()，而非dumps()
+    for i in range(max(y_indexes) - min(y_indexes), -1, -1):
+        for j in range(max(x_indexes) - min(x_indexes) + 1):
+            if warehouse_map[j][i] == 0:
+                print(' ', end='')
+            elif warehouse_map[j][i] == 1:
+                print('*', end='')
+            else:
+                print('#', end='')
+        print('')
+    # pdb.set_trace()
+
 # 示例使用：定义颜色矩阵并创建网格图
 if __name__ == "__main__":
+    read_xmap()
     # 示例1：使用颜色名称
-    file = 'small'
+    file = 'geekplus'
     with open(f'{file}.json', 'r', encoding='utf-8') as f:
         json_data = json.load(f)
     x_max = json_data['x_max']
@@ -175,9 +252,9 @@ if __name__ == "__main__":
     colors = [['white'] * x_max for _ in range(y_max)]
     for workstation in json_data['workstations']:
         x, y = workstation
-        colors[x_max - 1 - y][x] = 'black'
+        colors[y_max - 1 - y][x] = 'black'
     for shelf in json_data['shelves']:
         x, y = shelf['coord']
-        colors[x_max - 1 - y][x] = 'blue'
+        colors[y_max - 1 - y][x] = 'blue'
     create_grid_visualization(colors, title=f"{file}_layout", save_path=f"output/{file}.png")
     # exit(0)

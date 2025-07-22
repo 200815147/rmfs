@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class LOGLEVEL(Enum):
     INFO = 0
     WARN = 1

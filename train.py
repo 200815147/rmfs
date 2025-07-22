@@ -17,9 +17,11 @@ from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module import RLModule
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
 from ray.tune import RunConfig, Tuner
+from tqdm import tqdm
 
 from algorithms.heuristic import HeuristicRLM
 from algorithms.hgnn import HGNNModule
+from algorithms.hierarchy import HierarchicalModule
 from algorithms.transformer import TransformerModule
 from common_args import env_attr
 from rmfs_env import RMFSEnv
@@ -28,12 +30,17 @@ from rmfs_env import RMFSEnv
 class MyCallback(RLlibCallback):
     def __init__(self):
         super().__init__()
-        # Keep some global state in between individual callback events.
-        self.overall_sum_of_rewards = 0.0
 
-    def on_episode_end(self, *, episode, **kwargs):
-        self.overall_sum_of_rewards += episode.get_return()
-        print(f"Episode done. R={episode.get_return()}")
+    def on_episode_end(self, *, episode, metrics_logger, **kwargs):
+        # pdb.set_trace()
+        makespan = episode.get_infos()[-1]['makespan']
+        seed = episode.get_infos()[-1]['seed']
+        metrics_logger.log_value('reward', episode.get_return(), reduce='mean', window=1000)
+        metrics_logger.log_value('makespan', makespan, reduce='mean', window=1000)
+        print(f"Episode done. R={episode.get_return()} makespan={makespan} seed={seed} steps={episode.env_steps()}")
+        mean_reward = metrics_logger.peek('reward')
+        mean_makespan = metrics_logger.peek('makespan')
+        print(f'Mean reward: {mean_reward} Mean makespan: {mean_makespan}')
 
     def on_train_result(
         self,
@@ -66,6 +73,7 @@ if __name__ == '__main__':
     parser.add_argument('--gamma', type=float, default=0.98)
     parser.add_argument('--lambda_', type=float, default=0.95)
     parser.add_argument('--num_env_runners', type=int, default=0)
+    parser.add_argument('--num_envs_per_env_runner', type=int, default=1)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument("--disable_gae", action="store_true")
     parser.add_argument("--disable_critic", action="store_true")
@@ -84,7 +92,7 @@ if __name__ == '__main__':
     random.seed(opts.seed)
     np.random.seed(opts.seed)
     torch.manual_seed(opts.seed)
-    torch.cuda.manual_seed_all(opts.seed)  # 如果有 GPU
+    torch.cuda.manual_seed_all(opts.seed)
     torch.cuda.cudnn_enabled = False # 可能牺牲性能？
     torch.backends.cudnn.deterministic = True # 可能牺牲性能？
 
@@ -102,8 +110,11 @@ if __name__ == '__main__':
     
     env = RMFSEnv(env_config)
     # exit(0)
-    if opts.model in ['transformer']:
-        module_class = TransformerModule
+    if opts.model in ['transformer', 'hierarchical']:
+        if opts.model == 'transformer':
+            module_class = TransformerModule
+        else:
+            module_class = HierarchicalModule
         config = (
             PPOConfig()
             .environment(
@@ -112,8 +123,8 @@ if __name__ == '__main__':
             )
             .framework("torch")
             .env_runners(
-                num_env_runners=opts.num_env_runners
-                # gym_env_vectorize_mode='SYNC'
+                num_env_runners=opts.num_env_runners,
+                num_envs_per_env_runner=opts.num_envs_per_env_runner
                 # Number of EnvRunner actors to create for parallel sampling. 
                 # Setting this to 0 forces sampling to be done in the local EnvRunner (main process or the Algorithm's actor when using Tune).
             )
@@ -128,8 +139,6 @@ if __name__ == '__main__':
             )
             .resources(num_gpus=1)
             .rl_module(
-            # We need to explicitly specify here RLModule to use and
-            # the catalog needed to build it.
                 rl_module_spec=RLModuleSpec(
                     module_class=module_class,
                     model_config={}
@@ -140,8 +149,6 @@ if __name__ == '__main__':
                 # Cannot set both `num_cpus_per_learner` > 1 and  `num_gpus_per_learner` > 0! 
                 # Either set `num_cpus_per_learner` > 1 (and `num_gpus_per_learner`=0) OR 
                 #   set `num_gpus_per_learner` > 0 (and leave `num_cpus_per_learner` at its default value of 1).
-                # This is due to issues with placement group fragmentation. 
-                # See https://github.com/ray-project/ray/issues/35409 for more details.
             )
             .callbacks(MyCallback)
         )
@@ -162,10 +169,13 @@ if __name__ == '__main__':
         
         pd.set_option('display.max_rows', None)
         pd.set_option('display.max_columns', None)
-        df = metrics_df[['training_iteration', 'env_runners/episode_return_mean', 'learners/default_policy/policy_loss', 'learners/default_policy/vf_loss']]
-        print(metrics_df[['training_iteration', 'env_runners/episode_return_mean']])
-        df.to_csv('output/train_metrics.csv', index=False)
-
+        # pdb.set_trace()
+        try:
+            df = metrics_df[['training_iteration', 'env_runners/episode_return_mean', 'learners/default_policy/policy_loss', 'learners/default_policy/vf_loss']]
+            print(metrics_df[['training_iteration', 'env_runners/episode_return_mean']])
+            df.to_csv('output/train_metrics.csv', index=False)
+        except:
+            pass
         best_ckpt = best_result.checkpoint
         print(f'Save checkpoint to {Path(best_ckpt.path)}.')
         rl_module = RLModule.from_checkpoint(
@@ -175,7 +185,6 @@ if __name__ == '__main__':
             / "rl_module"
             / "default_policy"
         )
-        # pdb.set_trace()
     elif opts.model == 'heuristic':
         rl_module = HeuristicRLM(
             observation_space=env.observation_space, 
@@ -196,7 +205,7 @@ if __name__ == '__main__':
         distances = []
         makespans = []
         st = time.time()
-        for _ in range(T):
+        for _ in tqdm(range(T)):
             # print(f'Episode: {_}')
             obs, _ = env.reset(seed=_)
             done = False
