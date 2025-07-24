@@ -3,7 +3,6 @@ import pdb
 import torch
 from torch import nn
 
-from common_args import env_attr
 
 
 def backward_hook(module, grad_input, grad_output):
@@ -36,8 +35,9 @@ def backward_hook(module, grad_input, grad_output):
 
 
 class VacancyMLP(nn.Module):
-    def __init__(self, input_dim, spatial_dim, embed_dim):
+    def __init__(self, input_dim, spatial_dim, embed_dim, n_shelves):
         super().__init__()
+        self.n_shelves = n_shelves
         self.spatial_dim = spatial_dim
         self.vacancy_mlp = nn.Sequential(
             nn.Linear(spatial_dim, embed_dim), nn.LeakyReLU(),
@@ -54,10 +54,10 @@ class VacancyMLP(nn.Module):
         state = state.squeeze(-1)
         B = state.shape[0]
         Nv = state.shape[1]
-        v_batch_idx, v_idx = torch.where(state == env_attr.n_shelves)
+        v_batch_idx, v_idx = torch.where(state == self.n_shelves)
         v_feat = x[v_batch_idx, v_idx, :self.spatial_dim]
         v_out = self.vacancy_mlp(v_feat)
-        s_batch_idx, s_idx = torch.where(state != env_attr.n_shelves)
+        s_batch_idx, s_idx = torch.where(state != self.n_shelves)
         s_feat = x[s_batch_idx, s_idx]
         s_out = self.shelf_mlp(s_feat)
         out = torch.zeros((B, Nv, self.embed_dim), device=x.device).float()
@@ -66,8 +66,9 @@ class VacancyMLP(nn.Module):
         return out
     
 class RobotMLP(nn.Module):
-    def __init__(self, input_dim, spatial_dim, embed_dim):
+    def __init__(self, input_dim, spatial_dim, embed_dim, n_shelves):
         super().__init__()
+        self.n_shelves = n_shelves
         self.spatial_dim = spatial_dim
         self.robot_mlp = nn.Sequential(
             nn.Linear(spatial_dim, embed_dim), nn.LeakyReLU(),
@@ -85,8 +86,8 @@ class RobotMLP(nn.Module):
         # pdb.set_trace()
         robot_out = self.robot_mlp(coord).unsqueeze(1)
         B = shelf.shape[0]
-        no_shelf_idx = torch.where(shelf == env_attr.n_shelves)[0]
-        carry_shelf_idx = torch.where(shelf != env_attr.n_shelves)[0]
+        no_shelf_idx = torch.where(shelf == self.n_shelves)[0]
+        carry_shelf_idx = torch.where(shelf != self.n_shelves)[0]
         s_feat = inventory[carry_shelf_idx, shelf[carry_shelf_idx]]
         s_out = self.shelf_mlp(s_feat)
         shelf_out = torch.zeros((B, self.embed_dim), device=shelf.device).float()

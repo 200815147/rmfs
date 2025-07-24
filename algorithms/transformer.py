@@ -22,23 +22,22 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
     @override(TorchRLModule)
     def setup(self):
         super().setup()
-        
+        layout = self.model_config.get('layout')
+        self.n_robots = len(layout['robots'])
+        self.n_workstations = len(layout['workstations'])
+        self.n_shelves = len(layout['shelves'])
+        self.n_sku_types = layout['n_sku_types']
         # 嵌入维度
         embed_dim = self.model_config.get('embed_dim', 512)
 
         self.use_phase_embedding = self.model_config.get('use_phase_embedding', True)
         self.phase_embedding = nn.Embedding(env_attr.n_robot_state, embed_dim)
         
-        shelf_dim = env_attr.n_sku_types
-        self.robot_mlp = RobotMLP(shelf_dim, 2, embed_dim) # [x, y]
-        self.vacancy_mlp = VacancyMLP(shelf_dim, 3, embed_dim) # [x, y, dis]
+        shelf_dim = self.n_sku_types
+        self.robot_mlp = RobotMLP(shelf_dim, 2, embed_dim, self.n_shelves) # [x, y]
+        self.vacancy_mlp = VacancyMLP(shelf_dim, 3, embed_dim, self.n_shelves) # [x, y, dis]
 
-        # print('phase_embedding')
-        # print(list(self.phase_embedding.parameters()))
-        # print('robot_mlp')
-        # print(self.robot_mlp.placeholder)
-        
-        ws_dim = 1 + 2 + env_attr.n_sku_types
+        ws_dim = 1 + 2 + self.n_sku_types
         self.ws_mlp = nn.Sequential(
             nn.Linear(ws_dim, embed_dim), nn.LeakyReLU(),
             nn.Linear(embed_dim, embed_dim), nn.LeakyReLU()
@@ -54,7 +53,7 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         self.policy_head = nn.Linear(embed_dim, 1)
-        seq_len = 1 + env_attr.n_shelves + env_attr.n_workstations
+        seq_len = 1 + self.n_shelves + self.n_workstations
         if self.use_phase_embedding:
             seq_len += 1
         self.value_head = nn.Linear(embed_dim * seq_len, 1)
@@ -65,14 +64,16 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
         """
         将各实体编码到同一 embedding 空间，输出各 [B, embed_dim]
         """
-
+        parameters = next(self.parameters())
+        device = parameters.device
         B = batch['obs']['robots']['state'].shape[0]
         if isinstance(batch['obs']['robots']['state'], np.ndarray): # compute_values 传进来的是 np.ndarray 且没有 batch
-            batch['obs'] = dict_to_batch_tensor(batch['obs'])
+            batch['obs'] = dict_to_batch_tensor(batch['obs'], torch.float32, device)
             B = 1
-            
+        # print(f'batch: {B}')
         robots = batch['obs']['robots']
         next_robot_state = robots['state'][torch.arange(B), batch['obs']['global']['next_robot'].squeeze(-1)]
+        # pdb.set_trace()
         phase_emb = self.phase_embedding(next_robot_state).unsqueeze(1)  # [B, 1, embed_dim]
         
         shelves = batch['obs']['shelves']
@@ -81,8 +82,8 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
             vacancies['distance'].float().unsqueeze(-1),      
             vacancies['coord'].float(),    
             shelves['inventory'].float()
-        ], dim=-1).view(B, env_attr.n_shelves, -1)                # [B, N_s, shelf_feat_dim]
-        vacancy_emb = self.vacancy_mlp(vacancies['state'].view(B, env_attr.n_shelves, -1), feat_s)            # [B, N_s, embed_dim]
+        ], dim=-1).view(B, self.n_shelves, -1)                # [B, N_s, shelf_feat_dim]
+        vacancy_emb = self.vacancy_mlp(vacancies['state'].view(B, self.n_shelves, -1), feat_s)            # [B, N_s, embed_dim]
 
         # 机器人特征编码: [B, N_r, feat] -> MLP -> [B, N_r, embed_dim]
         
@@ -96,7 +97,7 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
             ws['distance'].float().unsqueeze(-1),
             ws['coord'].float(),
             ws['demand'].float()
-        ], dim=-1).view(B, env_attr.n_workstations, -1).type(torch.float32)               # [B, N_ws, ws_feat_dim]
+        ], dim=-1).view(B, self.n_workstations, -1).type(torch.float32)               # [B, N_ws, ws_feat_dim]
         ws_emb = self.ws_mlp(feat_ws)             # [B, N_ws, embed_dim]
 
         return phase_emb, robot_emb, vacancy_emb, ws_emb
@@ -119,11 +120,11 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
 
         # pdb.set_trace()
         enc = self.transformer(seq)             # [B, L, D]
-        logits = enc[:, :env_attr.n_shelves + env_attr.n_workstations, :]            # [B, L, D]
+        logits = enc[:, :self.n_shelves + self.n_workstations, :]            # [B, L, D]
         logits = self.policy_head(logits).squeeze(-1)
 
         # 各动作维度 logits
-        # logits = enc.transpose(0, 1)[:, env_attr.n_robots:, :]
+        # logits = enc.transpose(0, 1)[:, self.n_robots:, :]
         # logits = self.policy_heads(logits).squeeze(-1)
         action_mask = batch['obs']['global']["action_mask"]
         if action_mask is not None:

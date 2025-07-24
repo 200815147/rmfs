@@ -22,12 +22,16 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
     @override(TorchRLModule)
     def setup(self):
         super().setup()
-        
+        layout = self.model_config.get('layout')
+        self.n_robots = len(layout['robots'])
+        self.n_workstations = len(layout['workstations'])
+        self.n_shelves = len(layout['shelves'])
+        self.n_sku_types = layout['n_sku_types']
         # 嵌入维度
         embed_dim = self.model_config.get('embed_dim', 512)
         self.embed_dim = embed_dim
-        shelf_dim = env_attr.n_sku_types
-        ws_dim = 1 + 2 + env_attr.n_sku_types
+        shelf_dim = self.n_sku_types
+        ws_dim = 1 + 2 + self.n_sku_types
         # Transformer Encoder: 接收实体序列长度 L, 每个 embedding 大小 embed_dim
         nhead = self.model_config.get('nhead', 8)
         num_layers = self.model_config.get('num_layers', 6)
@@ -40,8 +44,8 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
         self.transformer = nn.ModuleList()
         self.policy_head = nn.ModuleList()
         for i in range(self.num_stages):
-            self.robot_mlp.append(RobotMLP(shelf_dim, 2, embed_dim)) # [x, y]
-            self.vacancy_mlp.append(VacancyMLP(shelf_dim, 3, embed_dim)) # [x, y, dis]
+            self.robot_mlp.append(RobotMLP(shelf_dim, 2, embed_dim, self.n_shelves)) # [x, y]
+            self.vacancy_mlp.append(VacancyMLP(shelf_dim, 3, embed_dim, self.n_shelves)) # [x, y, dis]
             self.ws_mlp.append(nn.Sequential(
                 nn.Linear(ws_dim, embed_dim), nn.LeakyReLU(),
                 nn.Linear(embed_dim, embed_dim), nn.LeakyReLU()
@@ -52,7 +56,7 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
             self.transformer.append(nn.TransformerEncoder(encoder_layer, num_layers=num_layers))
             self.policy_head.append(nn.Linear(embed_dim, 1))
 
-        seq_len = 1 + env_attr.n_shelves + env_attr.n_workstations
+        seq_len = 1 + self.n_shelves + self.n_workstations
         self.value_head = nn.Linear(embed_dim * seq_len, 1)
         
         # self.apply(lambda module: module.register_full_backward_hook(backward_hook))
@@ -75,31 +79,24 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
         vacancies = batch['obs']['vacancies']
         ws = batch['obs']['workstations']
         device = next_robot_state.device
-        vacancy_emb = torch.zeros((B, env_attr.n_shelves, self.embed_dim), device=device)
-        ws_emb = torch.zeros((B, env_attr.n_workstations, self.embed_dim), device=device)
+        vacancy_emb = torch.zeros((B, self.n_shelves, self.embed_dim), device=device)
+        ws_emb = torch.zeros((B, self.n_workstations, self.embed_dim), device=device)
         robot_emb = torch.zeros((B, 1, self.embed_dim), device=device)
         for i in range(self.num_stages):
             idx = torch.where(next_robot_state == i)[0]
             if len(idx) == 0:
                 continue
-            try:
-                feat_s = torch.cat([
-                    vacancies['distance'][idx].float().unsqueeze(-1),      
-                    vacancies['coord'][idx].float(),    
-                    shelves['inventory'][idx].float()
-                ], dim=-1).view(len(idx), env_attr.n_shelves, -1)                # [B, N_s, shelf_feat_dim]
-            except:
-                pdb.set_trace()
-            try:
-                vacancy_emb[idx] = self.vacancy_mlp[i](vacancies['state'][idx].view(len(idx), env_attr.n_shelves, -1), feat_s)            # [B, N_s, embed_dim]
-            except:
-                pdb.set_trace()
+
+            feat_s = torch.cat([
+                vacancies['distance'][idx].float().unsqueeze(-1),      
+                vacancies['coord'][idx].float(),    
+                shelves['inventory'][idx].float()
+            ], dim=-1).view(len(idx), self.n_shelves, -1)                # [B, N_s, shelf_feat_dim]
+            vacancy_emb[idx] = self.vacancy_mlp[i](vacancies['state'][idx].view(len(idx), self.n_shelves, -1), feat_s)            # [B, N_s, embed_dim]
+
             # 机器人特征编码: [B, N_r, feat] -> MLP -> [B, N_r, embed_dim]
             
-            try:
-                next_robot_shelf = robots['shelf'][idx, batch['obs']['global']['next_robot'][idx].squeeze(-1)]
-            except:
-                pdb.set_trace()
+            next_robot_shelf = robots['shelf'][idx, batch['obs']['global']['next_robot'][idx].squeeze(-1)]
             next_robot_coord = robots['coord'][idx, batch['obs']['global']['next_robot'][idx].squeeze(-1)].float()
             robot_emb[idx] = self.robot_mlp[i](next_robot_shelf, next_robot_coord, shelves['inventory'][idx].float())            # MLP applies over last dim: [B, N_r, embed_dim]
 
@@ -107,7 +104,7 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
                 ws['distance'][idx].float().unsqueeze(-1),
                 ws['coord'][idx].float(),
                 ws['demand'][idx].float()
-            ], dim=-1).view(len(idx), env_attr.n_workstations, -1).type(torch.float32)               # [B, N_ws, ws_feat_dim]
+            ], dim=-1).view(len(idx), self.n_workstations, -1).type(torch.float32)               # [B, N_ws, ws_feat_dim]
             ws_emb[idx] = self.ws_mlp[i](feat_ws)             # [B, N_ws, embed_dim]
 
         return robot_emb, vacancy_emb, ws_emb
@@ -131,20 +128,14 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
         robots = batch['obs']['robots']
         next_robot_state = robots['state'][torch.arange(B), batch['obs']['global']['next_robot'].squeeze(-1)]
         device = next_robot_state.device
-        logits = torch.zeros((B, env_attr.n_shelves + env_attr.n_workstations), device=device)
+        logits = torch.zeros((B, self.n_shelves + self.n_workstations), device=device)
         for i in range(self.num_stages):
             idx = torch.where(next_robot_state == i)[0]
             if len(idx) == 0:
                 continue
             enc = self.transformer[i](seq[idx])             # [B, L, D]
-            try:
-                tmp_emb = enc[:, :env_attr.n_shelves + env_attr.n_workstations, :]            # [B, L, D]
-            except:
-                pdb.set_trace()
-            try:
-                logits[idx] = self.policy_head[i](tmp_emb).squeeze(-1)
-            except:
-                pdb.set_trace()
+            tmp_emb = enc[:, :self.n_shelves + self.n_workstations, :]            # [B, L, D]
+            logits[idx] = self.policy_head[i](tmp_emb).squeeze(-1)
 
         action_mask = batch['obs']['global']["action_mask"]
         if action_mask is not None:

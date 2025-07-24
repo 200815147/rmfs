@@ -6,8 +6,7 @@ from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
 from ray.rllib.utils.annotations import override
 
-from common_args import MapState, RobotState, env_attr
-from utils import encode_action
+from common_args import RobotState
 
 
 class HeuristicRLM(RLModule):
@@ -15,11 +14,11 @@ class HeuristicRLM(RLModule):
     def __init__(self, observation_space, action_space, model_config, inference_only=True, **kwargs):
         super().__init__()
         layout = kwargs['env_config']['layout']
-        with open(f'/home/tangyibang/rmfs/{layout}.json', 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-        self.config = json_data
-        self.shelves = self.config['shelves']
-        self.workstations = self.config['workstations']
+        self.n_robots = len(layout['robots'])
+        self.n_workstations = len(layout['workstations'])
+        self.n_shelves = len(layout['shelves'])
+        self.shelves = layout['shelves']
+        self.workstations = layout['workstations']
         self.model_config = model_config
 
     @override(RLModule)
@@ -31,7 +30,6 @@ class HeuristicRLM(RLModule):
         workstations_obs = obs['workstations']
         shelves_obs = obs['shelves']
         vacancies_obs = obs['vacancies']
-        map_obs = obs['map']
 
         def distance(key1, idx1, key2, idx2):
             assert key1 in ['robots', 'workstations', 'vacancies']
@@ -40,40 +38,56 @@ class HeuristicRLM(RLModule):
             x2, y2 = obs[key2]['coord'][idx2]
             return abs(x1 - x2) + abs(y1 - y2)
         
-        # fuck = robots_obs['state'][robot_id]
-        # print(f'decide {robot_id} {fuck}')
         if robots_obs['state'][robot_id] == RobotState.PICK.value:
             vacancy_id = -1
             if self.model_config['pick'] == 'naive':
                 valid_id = 0
-                for i in range(env_attr.n_shelves):
-                    if vacancies_obs['state'][i] != env_attr.n_shelves:
+                for i in range(self.n_shelves):
+                    if vacancies_obs['state'][i] != self.n_shelves:
                         valid_id = i
                         shelf_id = vacancies_obs['state'][i]
                         inventory = shelves_obs['inventory'][shelf_id]
-                        for j in range(env_attr.n_workstations):
+                        for j in range(self.n_workstations): # TODO 这里可以通过全局订单信息优化
                             demand = workstations_obs['demand'][j]
                             tmp = np.minimum(inventory, demand)
-                            if np.sum(tmp) > 0:
+                            if np.any(tmp):
                                 vacancy_id = i
                                 break
                     if vacancy_id != -1:
                         break
                 if vacancy_id == -1:
                     vacancy_id = valid_id
+            elif self.model_config['pick'] == 'max_satify':
+                valid_id = 0
+                max_demand = 0
+                for i in range(self.n_shelves):
+                    if vacancies_obs['state'][i] != self.n_shelves:
+                        valid_id = i
+                        shelf_id = vacancies_obs['state'][i]
+                        inventory = shelves_obs['inventory'][shelf_id]
+                        for j in range(self.n_workstations):
+                            demand = workstations_obs['demand'][j]
+                            satisfy_demand = np.sum(np.minimum(inventory, demand))
+                            if satisfy_demand > max_demand:
+                                max_demand = satisfy_demand
+                                vacancy_id = i
+                    if vacancy_id != -1:
+                        break
+                if vacancy_id == -1:
+                    vacancy_id = valid_id
             elif self.model_config['pick'] == 'nearest':
                 valid_id = 0
-                min_dis = env_attr.inf
-                for i in range(env_attr.n_shelves):
-                    if vacancies_obs['state'][i] != env_attr.n_shelves:
+                min_dis = self.inf
+                for i in range(self.n_shelves):
+                    if vacancies_obs['state'][i] != self.n_shelves:
                         valid_id = i
                         shelf_id = vacancies_obs['state'][i]
                         inventory = shelves_obs['inventory'][shelf_id]
                         dis = distance('robots', robot_id, 'vacancies', i)
-                        for j in range(env_attr.n_workstations):
+                        for j in range(self.n_workstations):
                             demand = workstations_obs['demand'][j]
                             tmp = np.minimum(inventory, demand)
-                            if np.sum(tmp) > 0:
+                            if np.any(tmp):
                                 if dis < min_dis:
                                     min_dis = dis
                                     vacancy_id = i
@@ -90,10 +104,10 @@ class HeuristicRLM(RLModule):
                 shelf_id = robots_obs['shelf'][robot_id]
                 inventory = shelves_obs['inventory'][shelf_id]
                 workstations_id = 0
-                for i in range(env_attr.n_workstations):
+                for i in range(self.n_workstations):
                     demand = workstations_obs['demand'][i]
                     tmp = np.minimum(inventory, demand)
-                    if np.sum(tmp) > 0:
+                    if np.any(tmp):
                         workstations_id = i
                         break
             elif self.model_config['deliver'] == 'max_satify':
@@ -101,7 +115,7 @@ class HeuristicRLM(RLModule):
                 inventory = shelves_obs['inventory'][shelf_id]
                 max_demand = -1
                 workstations_id = 0
-                for i in range(env_attr.n_workstations):
+                for i in range(self.n_workstations):
                     demand = workstations_obs['demand'][i]
                     satisfy_demand = np.sum(np.minimum(inventory, demand))
                     if satisfy_demand > max_demand:
@@ -110,13 +124,12 @@ class HeuristicRLM(RLModule):
             elif self.model_config['deliver'] == 'nearest':
                 shelf_id = robots_obs['shelf'][robot_id]
                 inventory = shelves_obs['inventory'][shelf_id]
-                min_dis = env_attr.inf
+                min_dis = self.inf
                 workstations_id = 0
-                for i in range(env_attr.n_workstations):
+                for i in range(self.n_workstations):
                     demand = workstations_obs['demand'][i]
-                    satisfy_demand = np.sum(np.minimum(inventory, demand))
                     dis = distance('robots', robot_id, 'workstations', i)
-                    if satisfy_demand > 0 and dis < min_dis:
+                    if np.any(np.minimum(inventory, demand)) and dis < min_dis:
                         min_dis = dis
                         workstations_id = i
             else:
@@ -124,15 +137,15 @@ class HeuristicRLM(RLModule):
             # pdb.set_trace()
             # print(inventory)
             # print(workstations_obs['demand'][workstations_id])
-            ret.append(workstations_id + env_attr.n_shelves)
+            ret.append(workstations_id + self.n_shelves)
         elif robots_obs['state'][robot_id] == RobotState.RETURN.value:
             if self.model_config['return'] == 'origin':
                 vacancy_id = robots_obs['shelf'][robot_id]
             elif self.model_config['return'] == 'nearest':
                 valid_id = 0
-                min_dis = env_attr.inf
-                for i in range(env_attr.n_shelves):
-                    if vacancies_obs['state'][i] == env_attr.n_shelves:
+                min_dis = self.inf
+                for i in range(self.n_shelves):
+                    if vacancies_obs['state'][i] == self.n_shelves:
                         valid_id = i
                         dis = distance('robots', robot_id, 'vacancies', i)
                         if dis < min_dis:

@@ -9,5 +9,9 @@
     { "coord": [3, 4], "inventory": [[0, 1]] },
     { "coord": [4, 4], "inventory": [[0, 1]] }
   ],
-  "workstations": [[0, 0]]
+  "workstations": [[0, 0]],
+  "robots": [[0, 0]],
+  "x_max": 6,
+  "y_max": 6,
+  "n_sku_types": 2
 }

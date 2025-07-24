@@ -183,7 +183,7 @@ class RMFS_Env:
             'order_features': torch.tensor(order_features, dtype=torch.float32).unsqueeze(0),
             'adjacency_matrix': torch.tensor(adj_matrix, dtype=torch.float32).unsqueeze(0),
             'current_robot_id': torch.tensor([robot_id], dtype=torch.long),
-            'decision_phase': torch.tensor(], dtype=torch.long),
+            'decision_phase': torch.tensor([], dtype=torch.long),
             'return_to_go': torch.tensor([return_to_go], dtype=torch.float32)
         }
 

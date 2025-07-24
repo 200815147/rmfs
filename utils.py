@@ -9,7 +9,7 @@ import torch
 from common_args import RobotState, env_attr
 
 
-def dict_to_batch_tensor(x, dtype=torch.float32, device=None):
+def dict_to_batch_tensor(x, dtype, device=None):
     """
     Recursively convert a nested structure of dicts/lists/tuples containing
     numpy arrays, Python lists, ints/floats into torch.Tensors.
@@ -32,11 +32,6 @@ def dict_to_batch_tensor(x, dtype=torch.float32, device=None):
             t = t.to(device)
         return t
 
-def encode_action(x, y):
-    return x * env_attr.y_max + y
-
-def decode_action(action):
-    return action // env_attr.y_max, action % env_attr.y_max
 
 def flatten_obs(obs_batch):
     if not isinstance(obs_batch, dict):
@@ -226,9 +221,8 @@ def read_xmap():
         json_dict['workstations'].append([station['indexX'] - min_x, station['indexY'] - min_y])
         warehouse_map[station['indexX'] - min_x, station['indexY'] - min_y] = 2
 
-    # 写入JSON文件（使用with语句自动关闭文件）
     with open('geekplus.json', 'w') as f:
-        json.dump(json_dict, f)  # 注意：这里是dump()，而非dumps()
+        json.dump(json_dict, f)  
     for i in range(max(y_indexes) - min(y_indexes), -1, -1):
         for j in range(max(x_indexes) - min(x_indexes) + 1):
             if warehouse_map[j][i] == 0:
@@ -240,11 +234,46 @@ def read_xmap():
         print('')
     # pdb.set_trace()
 
-# 示例使用：定义颜色矩阵并创建网格图
+def gen_mid_layout():
+    json_dict = {}
+    x_max = 19
+    y_max = 11
+    json_dict['x_max'] = x_max
+    json_dict['y_max'] = y_max
+    json_dict['shelves'] = []
+    json_dict['workstations'] = []
+    json_dict['robots'] = []
+    json_dict['n_sku_types'] = 20
+    json_dict['order_num_l'] = 20
+    json_dict['order_num_r'] = 50
+    json_dict['order_time_l'] = 0
+    json_dict['order_time_r'] = 200
+    for i in range(4, 14, 3):
+        for x in [i, i + 1]:
+            for y in [1, 2, 3, 4, 6, 7, 8, 9]:
+                shelf = {
+                    'coord': [x, y],
+                    'inventory': []
+                }
+                for j in range(json_dict['n_sku_types']):
+                    shelf['inventory'].append([j, np.random.randint(1, 20)])
+                json_dict['shelves'].append(shelf)
+    for x in [0, x_max - 1]:
+        for y in range(0, y_max, 2):
+            json_dict['workstations'].append([x, y])
+            if x == 0:
+                json_dict['robots'].append([x + 1, y])
+            else:
+                json_dict['robots'].append([x - 1, y])
+    with open('layouts/mid.json', 'w') as f:
+        json.dump(json_dict, f) 
+
+
 if __name__ == "__main__":
-    read_xmap()
-    # 示例1：使用颜色名称
+    # read_xmap()
     file = 'geekplus'
+    gen_mid_layout()
+    file = 'mid'
     with open(f'{file}.json', 'r', encoding='utf-8') as f:
         json_data = json.load(f)
     x_max = json_data['x_max']
