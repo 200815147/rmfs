@@ -70,7 +70,7 @@ class TransformerModule(TorchRLModule, ValueFunctionAPI):
         if isinstance(batch['obs']['robots']['state'], np.ndarray): # compute_values 传进来的是 np.ndarray 且没有 batch
             batch['obs'] = dict_to_batch_tensor(batch['obs'], torch.float32, device)
             B = 1
-        # print(f'batch: {B}')
+        print(f'device: {device}')
         robots = batch['obs']['robots']
         next_robot_state = robots['state'][torch.arange(B), batch['obs']['global']['next_robot'].squeeze(-1)]
         # pdb.set_trace()

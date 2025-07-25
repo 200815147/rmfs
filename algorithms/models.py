@@ -4,7 +4,6 @@ import torch
 from torch import nn
 
 
-
 def backward_hook(module, grad_input, grad_output):
     # for g in list(grad_output):
     #     if g is None:

@@ -1,35 +1,36 @@
 import argparse
+import datetime
 import json
 import os
 import pdb
 import random
 import time
 from pathlib import Path
-from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
-import datetime
+
 import numpy as np
 import pandas as pd
 import ray
 import torch
+from cprint import *
 from gymnasium.envs.registration import register
 from ray import tune
+from ray.rllib.algorithms.algorithm import Algorithm
+from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.callbacks.callbacks import RLlibCallback
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module import RLModule
 from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+from ray.rllib.env.single_agent_episode import SingleAgentEpisode
+from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
 from ray.tune import RunConfig, Tuner
 from tqdm import tqdm
-from ray.rllib.algorithms.algorithm import Algorithm
-from cprint import *
 
 from algorithms.heuristic import HeuristicRLM
 from algorithms.hgnn import HGNNModule
 from algorithms.hierarchy import HierarchicalModule
 from algorithms.transformer import TransformerModule
 from rmfs_env import RMFSEnv
-from ray.rllib.utils.metrics.metrics_logger import MetricsLogger
-from ray.rllib.env.single_agent_episode import SingleAgentEpisode
 
 
 class MyCallback(RLlibCallback):
@@ -99,7 +100,6 @@ class MyCallback(RLlibCallback):
         evaluation_metrics: dict,
         **kwargs,
     ):
-        # pdb.set_trace()
         exp_name = algorithm.config.exp_name
         return_mean = evaluation_metrics['env_runners']['episode_return_mean']
         print(f'Evaluation return mean: {return_mean}.')
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=2000)
     parser.add_argument('--gamma', type=float, default=0.98)
     parser.add_argument('--lambda_', type=float, default=0.95)
-    parser.add_argument('--num_env_runners', type=int, default=0)
+    parser.add_argument('--num_env_runners', type=int, default=1)
     parser.add_argument('--num_envs_per_env_runner', type=int, default=1)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument("--disable_gae", action="store_true")
@@ -169,13 +169,6 @@ if __name__ == '__main__':
     # log_to_driver=False 关闭 raylet 警告
     # local_mode=True 可以用 pdb 调试
     # CUDA_VISIBLE_DEVICES 必须要加
-    # @ray.remote(num_gpus=2)
-    # def fuck():
-    #     print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
-    #     print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
-    #     print(torch.cuda.is_available())
-    # ray.get(fuck.remote())
-    # exit(0)
     exp_name = None
     if opts.exp:
         exp_name = opts.exp
@@ -203,8 +196,15 @@ if __name__ == '__main__':
         # 'exp_name': exp_name
     }
     env = RMFSEnv(env_config)
-    
+    resources = ray.cluster_resources()
+    # pdb.set_trace()
+    num_cpus = resources['CPU']
+    num_gpus = resources['GPU']
+    num_gpus_per = num_gpus / (opts.num_env_runners + opts.num_learners + 1) # TODO why +1?
+    print(f'num_gpus_per: {num_gpus_per}')
     if opts.model in ['transformer', 'hierarchical']:
+        if opts.num_env_runners > 1 or opts.num_learners > 1:
+            assert opts.disable_local_mode
         if opts.model == 'transformer':
             module_class = TransformerModule
         else:
@@ -219,7 +219,8 @@ if __name__ == '__main__':
             .framework("torch")
             .env_runners(
                 num_env_runners=opts.num_env_runners,
-                num_envs_per_env_runner=opts.num_envs_per_env_runner
+                num_envs_per_env_runner=opts.num_envs_per_env_runner,
+                num_gpus_per_env_runner=num_gpus_per
                 # Number of EnvRunner actors to create for parallel sampling. 
                 # Setting this to 0 forces sampling to be done in the local EnvRunner (main process or the Algorithm's actor when using Tune).
             )
@@ -232,11 +233,11 @@ if __name__ == '__main__':
                 use_gae=not opts.disable_gae,
                 use_critic=not opts.disable_critic,
                 lr=opts.lr,
-                # lr=tune.grid_search([0.0001, 0.0005, 0.00001]),
+                # lr=tune.grid_search([0.0001, 0.00001]), TODO tune 有问题
                 # train_batch_size=opts.batch_size,
                 # num_sgd_iter=opts.num_sgd_iter
             )
-            .resources(num_gpus=2)
+            # .resources(num_gpus=num_gpus)
             .rl_module(
                 rl_module_spec=RLModuleSpec(
                     module_class=module_class,
@@ -249,8 +250,8 @@ if __name__ == '__main__':
                 ),
             )
             .learners(
-                # num_learners=1, 加这个就出问题 没法多 GPU fuck
-                num_gpus_per_learner=2
+                num_learners=opts.num_learners, 
+                num_gpus_per_learner=num_gpus_per
                 # Cannot set both `num_cpus_per_learner` > 1 and  `num_gpus_per_learner` > 0! 
                 # Either set `num_cpus_per_learner` > 1 (and `num_gpus_per_learner`=0) OR 
                 #   set `num_gpus_per_learner` > 0 (and leave `num_cpus_per_learner` at its default value of 1).
