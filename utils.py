@@ -268,13 +268,49 @@ def gen_mid_layout():
     with open('layouts/mid.json', 'w') as f:
         json.dump(json_dict, f) 
 
+def gen_big_layout():
+    json_dict = {}
+    x_max = 31
+    y_max = 22
+    json_dict['x_max'] = x_max
+    json_dict['y_max'] = y_max
+    json_dict['shelves'] = []
+    json_dict['workstations'] = []
+    json_dict['robots'] = []
+    json_dict['n_sku_types'] = 40
+    json_dict['order_num_l'] = 40
+    json_dict['order_num_r'] = 100
+    json_dict['order_time_l'] = 0
+    json_dict['order_time_r'] = 400
+    for i in range(4, x_max - 5, 3):
+        for x in [i, i + 1]:
+            for y in [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19]:
+                shelf = {
+                    'coord': [x, y],
+                    'inventory': []
+                }
+                for j in range(json_dict['n_sku_types']):
+                    shelf['inventory'].append([j, np.random.randint(1, 40)])
+                json_dict['shelves'].append(shelf)
+    for x in [0, x_max - 1]:
+        for y in range(0, y_max, 2):
+            json_dict['workstations'].append([x, y])
+            if x == 0:
+                json_dict['robots'].append([x + 1, y])
+            else:
+                json_dict['robots'].append([x - 1, y])
+    for x in range(2, x_max - 2, 2):
+        json_dict['workstations'].append([x, y_max - 1])
+    with open('layouts/big.json', 'w') as f:
+        json.dump(json_dict, f) 
+
 
 if __name__ == "__main__":
     # read_xmap()
     file = 'geekplus'
-    gen_mid_layout()
-    file = 'mid'
-    with open(f'{file}.json', 'r', encoding='utf-8') as f:
+    gen_big_layout()
+    file = 'big'
+    with open(f'layouts/{file}.json', 'r', encoding='utf-8') as f:
         json_data = json.load(f)
     x_max = json_data['x_max']
     y_max = json_data['y_max']

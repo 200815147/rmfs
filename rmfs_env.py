@@ -25,10 +25,6 @@ class RMFSEnv(gym.Env):
         # print('Init Env')
         self.config = config
         layout = config['layout']
-        # self.config = json_data
-        # self.config['shelves'] = json_data['shelves']
-        # self.config['workstations'] = json_data['workstations']
-        # self.config['robots'] = json_data['robots']
         self.n_robots = len(layout['robots'])
         self.n_workstations = len(layout['workstations'])
         self.n_shelves = len(layout['shelves'])
@@ -36,7 +32,6 @@ class RMFSEnv(gym.Env):
         self.x_max = layout['x_max']
         self.y_max = layout['y_max']
         self.layout = layout
-        # pdb.set_trace()
         self.print_env_info = config['print_env_info']
         self.extra_reward = config['extra_reward']
         self.seed_pool = cycle(range(config["seed_l"], config["seed_r"] + 1))

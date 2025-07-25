@@ -65,10 +65,11 @@ class HierarchicalModule(TorchRLModule, ValueFunctionAPI):
         """
         将各实体编码到同一 embedding 空间，输出各 [B, embed_dim]
         """
-
+        parameters = next(self.parameters())
+        device = parameters.device
         B = batch['obs']['robots']['state'].shape[0]
         if isinstance(batch['obs']['robots']['state'], np.ndarray): # compute_values 传进来的是 np.ndarray 且没有 batch
-            batch['obs'] = dict_to_batch_tensor(batch['obs'])
+            batch['obs'] = dict_to_batch_tensor(batch['obs'], torch.float32, device)
             B = 1
             
         robots = batch['obs']['robots']

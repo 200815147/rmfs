@@ -30,6 +30,7 @@ from algorithms.heuristic import HeuristicRLM
 from algorithms.hgnn import HGNNModule
 from algorithms.hierarchy import HierarchicalModule
 from algorithms.transformer import TransformerModule
+from algorithms.distance_aware_transformer import DistanceAwareTransformerModule
 from rmfs_env import RMFSEnv
 
 
@@ -37,6 +38,7 @@ class MyCallback(RLlibCallback):
     def __init__(self):
         super().__init__()
         self.max_return_mean = -99999999
+        self.min_distance = 99999999
         self.exp_name = None
 
     def on_environment_created(
@@ -102,9 +104,11 @@ class MyCallback(RLlibCallback):
     ):
         exp_name = algorithm.config.exp_name
         return_mean = evaluation_metrics['env_runners']['episode_return_mean']
-        print(f'Evaluation return mean: {return_mean}.')
-        if return_mean > self.max_return_mean:
-            self.max_return_mean = return_mean
+        mean_distance = -evaluation_metrics['env_runners']['reward']
+        mean_makespan = evaluation_metrics['env_runners']['makespan']
+        print(f'Evaluation return mean: {return_mean}, mean distance: {mean_distance}, mean makespan: {mean_makespan}.')
+        if mean_distance < self.min_distance:
+            self.min_distance = mean_distance
             print(f'Save checkpoint to: /home/tangyibang/rmfs/output/checkpoints/{exp_name}.')
             algorithm.save_checkpoint(f'/home/tangyibang/rmfs/output/checkpoints/{exp_name}')
 
@@ -282,21 +286,16 @@ if __name__ == '__main__':
         ed = time.time()
         print(f'Training time: {ed - st}')
         best_result = results.get_best_result(
-            metric='evaluation/env_runners/episode_return_mean',
+            metric='evaluation/env_runners/reward',
             mode='max'
         )
         metrics_df = best_result.metrics_dataframe
         
         pd.set_option('display.max_rows', None)
         pd.set_option('display.max_columns', None)
-        # pdb.set_trace()
-        # try:
-        #     df = metrics_df[['training_iteration', 'env_runners/episode_return_mean', 'learners/default_policy/policy_loss', 'learners/default_policy/vf_loss']]
-        df = metrics_df[['training_iteration', 'evaluation/env_runners/episode_return_mean']]
+        df = metrics_df[['training_iteration', 'evaluation/env_runners/episode_return_mean', 'evaluation/env_runners/reward', 'evaluation/env_runners/makespan']]
         print(df)
-        # df.to_csv('output/train_metrics.csv', index=False)
-        # except:
-        #     pass
+        df.to_csv(f'output/{exp_name}.csv', index=False)
         best_ckpt = best_result.checkpoint
         print(f'Save checkpoint to {Path(best_ckpt.path)}.')
         rl_module = RLModule.from_checkpoint(
@@ -367,7 +366,7 @@ if __name__ == '__main__':
             rewards.append(total_reward)
             distances.append(total_distance)
             makespans.append(info['makespan'])
-            time_counter += info['time']
+            # time_counter += info['time']
         ed = time.time()
         print(f'Eval time: {ed - st}')
         mean_reward = sum(rewards) / len(rewards)
@@ -377,10 +376,12 @@ if __name__ == '__main__':
         print(f'mean distance: {mean_distance}')
         mean_makespan = sum(makespans) / len(makespans)
         print(f'mean makespan: {mean_makespan}')
-        print(f'Time: {time_counter}')
+        # print(f'Time: {time_counter}')
         return ed - st, mean_reward, mean_distance, mean_makespan
 
     if opts.eval_all:
+        distances = []
+        makespans = []
         for pick_method in pick_choices:
             for deliver_method in deliver_choices:
                 for return_method in return_choices:
@@ -395,7 +396,13 @@ if __name__ == '__main__':
                         env_config=env_config
                     )
                     print(pick_method, deliver_method, return_method)
-                    eval(env, rl_module)
                     print('')
+                    _, _, distance, makespan = eval(env, rl_module)
+                    distances.append(distance)
+                    makespans.append(makespan)
+        mean_distance = sum(distances) / len(distances)
+        print(f'mean distance: {mean_distance}, min distance: {min(distances)}')
+        mean_makespan = sum(makespans) / len(makespans)
+        print(f'mean makespan: {mean_makespan}, min makespan: {min(makespans)}')
     else:
         eval(env, rl_module)

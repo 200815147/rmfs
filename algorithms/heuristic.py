@@ -6,7 +6,7 @@ from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
 from ray.rllib.utils.annotations import override
 
-from common_args import RobotState
+from common_args import RobotState, env_attr
 
 
 class HeuristicRLM(RLModule):
@@ -77,7 +77,7 @@ class HeuristicRLM(RLModule):
                     vacancy_id = valid_id
             elif self.model_config['pick'] == 'nearest':
                 valid_id = 0
-                min_dis = self.inf
+                min_dis = env_attr.inf
                 for i in range(self.n_shelves):
                     if vacancies_obs['state'][i] != self.n_shelves:
                         valid_id = i
@@ -124,7 +124,7 @@ class HeuristicRLM(RLModule):
             elif self.model_config['deliver'] == 'nearest':
                 shelf_id = robots_obs['shelf'][robot_id]
                 inventory = shelves_obs['inventory'][shelf_id]
-                min_dis = self.inf
+                min_dis = env_attr.inf
                 workstations_id = 0
                 for i in range(self.n_workstations):
                     demand = workstations_obs['demand'][i]
@@ -143,7 +143,7 @@ class HeuristicRLM(RLModule):
                 vacancy_id = robots_obs['shelf'][robot_id]
             elif self.model_config['return'] == 'nearest':
                 valid_id = 0
-                min_dis = self.inf
+                min_dis = env_attr.inf
                 for i in range(self.n_shelves):
                     if vacancies_obs['state'][i] == self.n_shelves:
                         valid_id = i

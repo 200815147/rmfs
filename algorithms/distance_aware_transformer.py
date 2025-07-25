@@ -8,12 +8,12 @@ from ray.rllib.core.rl_module.torch.torch_rl_module import TorchRLModule
 from ray.rllib.utils.annotations import override
 from torch import nn
 
-from algorithms.models import RobotMLP, VacancyMLP, backward_hook
+from algorithms.models import RobotMLP, VacancyMLP, DistanceAwareMultiheadAttention, DistanceAwareTransformerLayer
 from common_args import env_attr
 from utils import dict_to_batch_tensor
 
 
-class TransformerModule(TorchRLModule, ValueFunctionAPI):
+class DistanceAwareTransformerModule(TorchRLModule, ValueFunctionAPI):
     """
     输出：
       _forward: {'logits': List of tensors, each [B, action_dim_i]}  对应 MultiDiscrete action heads
